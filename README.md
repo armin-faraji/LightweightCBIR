@@ -4,8 +4,6 @@ This repository implements the course project **Content-Based Image Retrieval Us
 
 The system freezes official DINOv2 ViT-S/14 with four registers, caches all-layer CLS/local aggregates, trains a small Reliability-Gated Multi-Level Global-Local Fusion (RGMF) head on retrieval-SfM-30k pairs, and evaluates a locked model on Revisited Oxford/Paris.
 
-The complete research/design record is in [PROJECT_HANDOFF.md](PROJECT_HANDOFF.md).
-
 ## Package layout
 
 - <code>src/cbir/backbone.py</code>: frozen official DINOv2 adapter and intermediate-token checks.
