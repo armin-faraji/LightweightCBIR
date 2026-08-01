@@ -1,5 +1,9 @@
+/papers/
+/reference_code/
 /history/
+/archive/
 test.py
+
 __pycache__/
 *.py[cod]
 .pytest_cache/
