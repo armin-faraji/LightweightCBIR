@@ -1,2 +1,8 @@
 /history/
 test.py
+__pycache__/
+*.py[cod]
+.pytest_cache/
+/data/
+/outputs/
+*.part
