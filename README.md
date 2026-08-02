@@ -31,7 +31,7 @@ https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/
 ```
 
 The first cell of each notebook mounts Drive, clones a project revision to
-`/content/lightweight-cbir`, installs it editable, selects the repository as
+`/content/lightweight-cbir`, installs a fresh local package copy, selects the repository as
 the current working directory, and records the runtime environment. It defaults
 to this repository's public HTTPS URL and `main`; override `CBIR_REPO_URL` and
 `CBIR_REPO_REVISION` for a fork, a private clone URL, or a pinned commit. Do
