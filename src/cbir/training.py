@@ -354,6 +354,7 @@ class HeadTrainer:
             descriptors,
             self.validation_image_ids,
             self.validation_cases,
+            device=self.device,
         )
 
     def _save_checkpoint(self, epoch: int, history: TrainingHistory) -> Path:

@@ -86,6 +86,7 @@ def rank_exact(
     database_descriptors: torch.Tensor,
     *,
     query_block_size: int = 256,
+    device: torch.device | str | None = None,
 ) -> torch.Tensor:
     """Return database indices in descending cosine-score order for each query."""
     if query_descriptors.ndim != 2 or database_descriptors.ndim != 2:
@@ -94,8 +95,11 @@ def rank_exact(
         raise ValueError("query/database descriptor dimensions differ")
     if query_block_size <= 0:
         raise ValueError("query_block_size must be positive")
-    queries = l2_normalize(query_descriptors.float())
-    database = l2_normalize(database_descriptors.float())
+    computation_device = (
+        query_descriptors.device if device is None else torch.device(device)
+    )
+    queries = l2_normalize(query_descriptors.float()).to(computation_device)
+    database = l2_normalize(database_descriptors.float()).to(computation_device)
     assert_finite("query descriptors", queries)
     assert_finite("database descriptors", database)
     ranks: list[torch.Tensor] = []
@@ -176,6 +180,7 @@ def evaluate_sfm_verified_pairs(
     cases: Sequence[ValidationCase],
     *,
     query_block_size: int = 256,
+    device: torch.device | str | None = None,
 ) -> SfmRetrievalReport:
     """Evaluate selected SfM positives while masking unjudged same-cluster views."""
     if descriptors.shape[0] != len(image_ids):
@@ -195,6 +200,7 @@ def evaluate_sfm_verified_pairs(
         query_descriptors,
         descriptors,
         query_block_size=query_block_size,
+        device=device,
     )
     ranks_by_query: dict[str, int] = {}
     for row, case in enumerate(cases):
