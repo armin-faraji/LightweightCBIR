@@ -42,10 +42,18 @@ def plot_series(
     error_bars: bool = True,
     ax: object | None = None,
     save_path: Path | None = None,
+    save_dpi: int = 300,
 ) -> tuple[object, object]:
-    """Plot arbitrary named series with stable colors, legends, and error support."""
+    """Plot arbitrary named series with stable colors, legends, and error support.
+
+    When ``save_path`` is supplied, the default 300 DPI is suitable for inserting
+    the generated PNG directly into a course report.  Pass a lower ``save_dpi``
+    only for disposable diagnostic plots.
+    """
     if not series:
         raise ValueError("at least one named series is required")
+    if save_dpi <= 0:
+        raise ValueError("save_dpi must be positive")
     import matplotlib.pyplot as plt
 
     if ax is None:
@@ -82,5 +90,5 @@ def plot_series(
     if save_path is not None:
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        figure.savefig(save_path, dpi=180, bbox_inches="tight")
+        figure.savefig(save_path, dpi=save_dpi, bbox_inches="tight")
     return figure, axis

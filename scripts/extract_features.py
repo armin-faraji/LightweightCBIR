@@ -67,11 +67,29 @@ def main() -> None:
         else config.cache.drive_root / cache_name
     )
     resolver = CacheResolver(local_dir, drive_dir)
-    local_manifest_exists = (local_dir / "manifest.json").is_file()
-    existing = None if local_manifest_exists else resolver.resolve_existing(fingerprint)
+    # Extraction is the sole consumer allowed to accept an incomplete cache.
+    # This restores a validated Drive prefix after a fresh Colab runtime, while
+    # readers/training still require the COMPLETE marker by default.
+    existing = resolver.resolve_existing(fingerprint, allow_incomplete=True)
     if existing is not None:
-        print(f"Using valid existing cache: {existing}")
-        return
+        complete = validate_feature_cache(existing, expected_fingerprint=fingerprint)
+        if complete["valid"]:
+            # A session can end after local finalization but before report/Drive
+            # publication.  Repair that harmless state on the next invocation
+            # instead of treating the cache as finished too early.
+            atomic_write_json(existing / "extraction_report.json", complete)
+            resolver.mirror_local_to_drive(extra_files=("extraction_report.json",))
+            print(f"Using valid existing cache: {existing}")
+            return
+        partial = validate_feature_cache(
+            existing,
+            expected_fingerprint=fingerprint,
+            require_complete=False,
+        )
+        print(
+            f"Resuming validated cache: {existing} "
+            f"({partial['completed_image_count']}/{partial['expected_image_count']} images)."
+        )
 
     manifest = FeatureManifest(
         fingerprint=fingerprint,
@@ -96,31 +114,39 @@ def main() -> None:
         f"extracting {len(pending)} images."
     )
 
-    extractor = FrozenDinoV2Extractor(config.backbone)
-    runner = FeatureExtractionRunner(extractor, config.preprocess, config.pooling)
-    reader_context = _make_image_reader(config)
-    with reader_context as image_reader:
-        for start in range(0, len(pending), config.cache.shard_size):
-            shard_records = pending[start : start + config.cache.shard_size]
-            images = [
-                (record.image_id, _read_sfm_image(image_reader, record))
-                for record in shard_records
-            ]
-            features = runner.extract_images(
-                images,
-                layer_indices=config.pooling.all_layer_indices,
-                backbone_batch_size=args.backbone_batch_size,
-            )
-            writer.write_shard(
-                features,
-                {record.image_id: records_by_id[record.image_id] for record in shard_records},
-            )
-            print(f"Wrote shard ending at {start + len(shard_records)}/{len(pending)}")
+    if pending:
+        extractor = FrozenDinoV2Extractor(config.backbone)
+        runner = FeatureExtractionRunner(extractor, config.preprocess, config.pooling)
+        reader_context = _make_image_reader(config)
+        with reader_context as image_reader:
+            for start in range(0, len(pending), config.cache.shard_size):
+                shard_records = pending[start : start + config.cache.shard_size]
+                images = [
+                    (record.image_id, _read_sfm_image(image_reader, record))
+                    for record in shard_records
+                ]
+                features = runner.extract_images(
+                    images,
+                    layer_indices=config.pooling.all_layer_indices,
+                    backbone_batch_size=args.backbone_batch_size,
+                )
+                writer.write_shard(
+                    features,
+                    {record.image_id: records_by_id[record.image_id] for record in shard_records},
+                )
+                # Publish each committed local shard.  The resolver uploads and
+                # validates the shard before atomically advancing Drive's manifest.
+                # A runtime interruption can therefore lose at most the current
+                # local-only shard, never invalidate previously published progress.
+                resolver.mirror_local_to_drive(require_complete=False, incremental=True)
+                print(f"Wrote shard ending at {start + len(shard_records)}/{len(pending)}")
 
     writer.finalize()
-    resolver.mirror_local_to_drive()
     report = validate_feature_cache(local_dir, expected_fingerprint=fingerprint)
     atomic_write_json(local_dir / "extraction_report.json", report)
+    # Publish the report before COMPLETE is copied, so a Drive cache accepted as
+    # final always carries the cache-validation evidence used to create it.
+    resolver.mirror_local_to_drive(extra_files=("extraction_report.json",))
     print(f"Feature cache complete and valid: {local_dir}")
 
 

@@ -8,7 +8,7 @@ import tempfile
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any, Callable, Iterator, Sequence
 
 import torch
 import torch.nn.functional as functional
@@ -200,6 +200,7 @@ class HeadTrainer:
         validation_cases: Sequence[ValidationCase] | None = None,
         validation_image_ids: Sequence[str] | None = None,
         output_dir: Path = Path("outputs/training"),
+        checkpoint_callback: Callable[[Path], None] | None = None,
     ) -> None:
         if training_config.num_workers != 0:
             raise ValueError(
@@ -222,6 +223,12 @@ class HeadTrainer:
                 "validation_cases and validation_image_ids must be supplied together"
             )
         self.output_dir = Path(output_dir)
+        # A cloud notebook can use this hook to copy every newly improved
+        # checkpoint to persistent storage immediately.  The callback runs only
+        # after the local checkpoint has been atomically replaced and receives
+        # that completed file path.  Its exceptions intentionally stop training:
+        # silently claiming a Drive-backed best checkpoint would be unsafe.
+        self.checkpoint_callback = checkpoint_callback
         self.device = torch.device(training_config.device)
         if self.device.type == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("training requests CUDA but CUDA is unavailable")
@@ -281,6 +288,8 @@ class HeadTrainer:
                 history.best_metric = metric
                 history.best_epoch = epoch
                 history.best_checkpoint = self._save_checkpoint(epoch, history)
+                if self.checkpoint_callback is not None:
+                    self.checkpoint_callback(history.best_checkpoint)
                 stale_epochs = 0
             else:
                 stale_epochs += 1

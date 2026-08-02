@@ -1,6 +1,14 @@
 """Dataset metadata, readers, and deterministic image transforms."""
 
 from .revisitop import RevisitGroundTruth, RevisitOPDataset, RevisitQuery
+from .revisitop_prepare import (
+    REVISITOP_DATASETS,
+    OFFICIAL_REVISITOP_COUNTS,
+    RevisitOPUrls,
+    publish_revisitop_datasets,
+    prepare_revisitop_datasets,
+    validate_revisitop_dataset,
+)
 from .download import SfmUrls, download_with_resume, extract_selected_sfm_images
 from .sfm import (
     ImageRecord,
@@ -20,6 +28,9 @@ __all__ = [
     "RevisitGroundTruth",
     "RevisitOPDataset",
     "RevisitQuery",
+    "REVISITOP_DATASETS",
+    "OFFICIAL_REVISITOP_COUNTS",
+    "RevisitOPUrls",
     "SfmUrls",
     "Sfm30kMetadata",
     "SfmImageDirectoryReader",
@@ -28,4 +39,7 @@ __all__ = [
     "download_with_resume",
     "extract_selected_sfm_images",
     "preprocess_retrieval_image",
+    "publish_revisitop_datasets",
+    "prepare_revisitop_datasets",
+    "validate_revisitop_dataset",
 ]

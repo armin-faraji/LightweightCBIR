@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+import warnings
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 
+from cbir.config import FusionConfig, TrainingConfig
 from cbir.data.sfm import PairRecord
-from cbir.training import ClusterUniquePairBatchSampler, symmetric_info_nce
+from cbir.fusion import ReliabilityGatedFusion
+from cbir.training import ClusterUniquePairBatchSampler, HeadTrainer, symmetric_info_nce
 
 
 class TrainingTests(unittest.TestCase):
@@ -25,6 +32,75 @@ class TrainingTests(unittest.TestCase):
         loss = symmetric_info_nce(query, query, temperature=0.1)
         self.assertTrue(torch.isfinite(loss))
         self.assertGreaterEqual(float(loss), 0.0)
+
+    def test_checkpoint_callback_receives_every_newly_improved_checkpoint(self) -> None:
+        fusion_config = FusionConfig(
+            token_dim=4,
+            layer_indices=(0, 1),
+            output_dim=3,
+        )
+        training_config = TrainingConfig(
+            batch_size=2,
+            epochs=3,
+            early_stopping_patience=3,
+            device="cpu",
+        )
+        head = ReliabilityGatedFusion.from_config(fusion_config)
+        # ``fit`` only needs a real cache reader inside the collator, which is
+        # bypassed here by the focused epoch-method patch below.  The genuine
+        # checkpoint writer still records the cache fingerprint.
+        reader = SimpleNamespace(
+            manifest=SimpleNamespace(
+                fingerprint="cache-fingerprint",
+                extraction_config={"backbone": "tiny"},
+            )
+        )
+        pairs = (
+            PairRecord("q0", "p0", 0, "train"),
+            PairRecord("q1", "p1", 1, "train"),
+        )
+        callbacks: list[tuple[Path, int]] = []
+
+        def on_checkpoint(path: Path) -> None:
+            self.assertTrue(path.is_file())
+            payload = torch.load(path, map_location="cpu", weights_only=False)
+            callbacks.append((path, int(payload["epoch"])))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            trainer = HeadTrainer(
+                head=head,
+                reader=reader,  # type: ignore[arg-type]
+                train_pairs=pairs,
+                fusion_config=fusion_config,
+                training_config=training_config,
+                output_dir=Path(temporary),
+                checkpoint_callback=on_checkpoint,
+            )
+            # Lower training loss means a higher checkpoint-selection metric
+            # when no validation set is configured.
+            metrics = iter(
+                (
+                    {"loss": 3.0, "lambda": 0.1, "learning_rate": 1e-3},
+                    {"loss": 2.0, "lambda": 0.1, "learning_rate": 1e-3},
+                    {"loss": 2.5, "lambda": 0.1, "learning_rate": 1e-3},
+                )
+            )
+            # The focused epoch stub does not perform a real optimizer step,
+            # so suppress PyTorch's scheduler-order warning that is irrelevant
+            # to the callback contract under test.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                with patch.object(
+                    trainer,
+                    "_train_epoch",
+                    side_effect=lambda _loader: next(metrics),
+                ):
+                    history = trainer.fit()
+
+            self.assertEqual([epoch for _, epoch in callbacks], [0, 1])
+            self.assertEqual(history.best_epoch, 1)
+            self.assertEqual(history.best_metric, -2.0)
+            self.assertEqual(history.best_checkpoint, Path(temporary) / "best.pt")
 
 
 if __name__ == "__main__":
