@@ -6,11 +6,13 @@ figures, metrics, and provenance to a local run directory first, then publishes 
 does not know how a cloud drive is mounted; a Drive path is simply a normal
 ``Path`` supplied by the caller.
 
-Publishing never overwrites an existing run.  A completed copy is validated in a
-hidden sibling directory before it is renamed into its visible destination.  A
-``COMPLETE`` marker makes the completion contract explicit for consumers.  Directory
-rename is atomic on normal local POSIX filesystems; a Google Drive FUSE mount can
-only provide this staged, best-effort equivalent.
+Publishing never overwrites an existing run.  If a notebook changes artifacts
+after a prior publication, the new manifest is published as a deterministic
+fingerprint-suffixed revision instead.  A completed copy is validated in a hidden
+sibling directory before it is renamed into its visible destination.  A ``COMPLETE``
+marker makes the completion contract explicit for consumers.  Directory rename is
+atomic on normal local POSIX filesystems; a Google Drive FUSE mount can only provide
+this staged, best-effort equivalent.
 """
 
 from __future__ import annotations
@@ -330,10 +332,12 @@ def publish_artifact_directory(
 ) -> Path:
     """Publish a finalized artifact directory through a hidden staging directory.
 
-    The destination is ``drive_output_root/<notebook>/<run-id>``.  A pre-existing
-    destination is accepted only when it validates and has exactly the same manifest
-    fingerprint, making retry after a successful publish idempotent.  Different
-    content is never overwritten.
+    The initial destination is ``drive_output_root/<notebook>/<run-id>``.  A
+    pre-existing destination is accepted only when it validates and has exactly
+    the same manifest fingerprint, making retry after a successful publish
+    idempotent.  Changed content is published to
+    ``<run-id>__rev-<manifest-fingerprint-prefix>``; neither artifact is
+    overwritten.
     """
     if stale_publish_seconds < 0:
         raise ValueError("stale_publish_seconds must be nonnegative")
@@ -343,7 +347,10 @@ def publish_artifact_directory(
         notebook=notebook,
         run_id=run_id,
     )
-    destination = Path(drive_output_root) / manifest["notebook"] / manifest["run_id"]
+    base_destination = (
+        Path(drive_output_root) / manifest["notebook"] / manifest["run_id"]
+    )
+    destination = base_destination
     if _same_path(artifact_dir, destination):
         return artifact_dir
     if destination.exists() or destination.is_symlink():
@@ -356,10 +363,33 @@ def publish_artifact_directory(
         )
         if existing["valid"] and existing["manifest"]["fingerprint"] == manifest["fingerprint"]:
             return destination
-        raise FileExistsError(
-            "refusing to overwrite existing Drive artifact run: "
-            f"{destination}"
+        # A notebook often produces a new pilot plot or summary after an
+        # initial publish.  Preserve the original immutable run and create a
+        # stable revision name from the new content identity instead of making
+        # the user restart the whole notebook merely to save the new artifact.
+        destination = base_destination.with_name(
+            f"{base_destination.name}__rev-{manifest['fingerprint'][:12]}"
         )
+        if destination.exists() or destination.is_symlink():
+            if destination.is_symlink():
+                raise FileExistsError(
+                    f"refusing to publish through a symlink: {destination}"
+                )
+            existing_revision = validate_artifact_directory(
+                destination,
+                expected_notebook=manifest["notebook"],
+                expected_run_id=manifest["run_id"],
+            )
+            if (
+                existing_revision["valid"]
+                and existing_revision["manifest"]["fingerprint"]
+                == manifest["fingerprint"]
+            ):
+                return destination
+            raise FileExistsError(
+                "refusing to overwrite an existing Drive artifact revision: "
+                f"{destination}"
+            )
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     _cleanup_stale_publish_staging(

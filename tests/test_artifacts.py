@@ -58,6 +58,19 @@ class ArtifactRunTests(unittest.TestCase):
             # A retry after a completed copy must not overwrite or duplicate it.
             self.assertEqual(run.publish(root / "drive" / "notebook_outputs"), destination)
 
+            # A notebook can make a new plot/metric after the first publish.
+            # Preserve the old immutable report and publish the changed content
+            # to a deterministic revision rather than raising an error.
+            run.write_json("metrics/pilot.json", {"temperature": 0.2, "score": 0.5})
+            revision = run.publish(root / "drive" / "notebook_outputs")
+            self.assertNotEqual(revision, destination)
+            self.assertTrue(revision.name.startswith(f"{run.run_id}__rev-"))
+            self.assertTrue(validate_artifact_directory(revision)["valid"])
+            self.assertEqual(
+                validate_artifact_directory(destination)["manifest"]["fingerprint"],
+                manifest["fingerprint"],
+            )
+
     def test_rejects_unsafe_artifact_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run = create_artifact_run(Path(temporary), "03", run_id="safe-run")

@@ -64,7 +64,9 @@ published to Drive during extraction, so a Colab disconnection loses at most the
 currently active shard. Notebook 03 also copies every newly improved checkpoint
 to Drive before continuing training. Run a notebook's final publish cell only
 after creating all artifacts for that run; it writes an immutable, validated
-artifact bundle rather than overwriting an earlier publication.
+artifact bundle. If you later create a changed plot or report in the same
+notebook session and publish again, it creates a fingerprint-suffixed revision
+rather than overwriting the earlier bundle.
 
 ### Persistent layout
 
