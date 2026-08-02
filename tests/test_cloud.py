@@ -2,9 +2,17 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
-from cbir.cloud import RuntimePaths, publish_file, runtime_report, stage_file, write_runtime_report
+from cbir.cloud import (
+    RuntimePaths,
+    detect_platform,
+    publish_file,
+    runtime_report,
+    stage_file,
+    write_runtime_report,
+)
 from cbir.utils import read_json
 
 
@@ -55,6 +63,15 @@ class CloudFileTests(unittest.TestCase):
 
 
 class RuntimeProvenanceTests(unittest.TestCase):
+    def test_real_colab_api_wins_over_ambiguous_kaggle_markers(self) -> None:
+        # This reproduces hosted images that expose a Kaggle-looking path or
+        # variable even though the active kernel is actually Google Colab.
+        with (
+            patch("cbir.cloud._colab_api_available", return_value=True),
+            patch.dict("os.environ", {"KAGGLE_KERNEL_RUN_TYPE": "Interactive"}),
+        ):
+            self.assertEqual(detect_platform(), "colab")
+
     def test_runtime_paths_and_report_are_json_safe(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

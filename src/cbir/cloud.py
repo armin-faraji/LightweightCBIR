@@ -52,9 +52,15 @@ class RuntimePaths:
 
 def detect_platform() -> CloudPlatform:
     """Return the supported hosted runtime, or ``local`` outside one."""
+    # The importable Colab kernel API is the authoritative signal.  Some hosted
+    # images expose a harmless ``/kaggle`` directory or inherited Kaggle-like
+    # environment variables, so filesystem/env heuristics must not take
+    # precedence over a real Google Colab kernel.
+    if _colab_api_available() or "COLAB_RELEASE_TAG" in os.environ:
+        return "colab"
     if Path("/kaggle").is_dir() or "KAGGLE_KERNEL_RUN_TYPE" in os.environ:
         return "kaggle"
-    if "COLAB_RELEASE_TAG" in os.environ or Path("/content").is_dir():
+    if Path("/content").is_dir():
         return "colab"
     return "local"
 
@@ -65,18 +71,27 @@ def mount_colab_drive(mount_point: Path = Path("/content/drive")) -> Path:
     It intentionally raises outside Colab rather than creating a misleading
     ordinary ``/content/drive`` directory that would disappear with the VM.
     """
-    if detect_platform() != "colab":
-        raise RuntimeError("Google Drive mounting is available only in a Colab runtime")
     try:
         from google.colab import drive  # type: ignore[import-not-found]
     except ImportError as error:  # pragma: no cover - defensive Colab diagnosis
-        raise RuntimeError("Colab Drive API is unavailable in this notebook kernel") from error
+        raise RuntimeError(
+            "Google Drive mounting requires the official Google Colab kernel API."
+        ) from error
     my_drive = Path(mount_point) / "MyDrive"
     if not my_drive.is_dir():
         drive.mount(str(mount_point))
     if not my_drive.is_dir():
         raise RuntimeError(f"Google Drive was not mounted at {my_drive}")
     return my_drive
+
+
+def _colab_api_available() -> bool:
+    """Return whether this exact Python kernel exposes the Colab API."""
+    try:
+        import google.colab  # type: ignore[import-not-found,unused-ignore]
+    except ImportError:
+        return False
+    return True
 
 
 def stage_file(persistent_path: Path, local_path: Path) -> Path:
