@@ -97,7 +97,12 @@ class ArtifactRun:
 
     def publish(self, drive_output_root: Path) -> Path:
         """Finalize, validate, and publish this run under persistent storage."""
-        return publish_artifact_directory(self.local_dir, drive_output_root)
+        return publish_artifact_directory(
+            self.local_dir,
+            drive_output_root,
+            notebook=self.notebook,
+            run_id=self.run_id,
+        )
 
 
 def create_artifact_run(
@@ -319,6 +324,8 @@ def publish_artifact_directory(
     artifact_dir: Path,
     drive_output_root: Path,
     *,
+    notebook: str | None = None,
+    run_id: str | None = None,
     stale_publish_seconds: int = DEFAULT_STALE_PUBLISH_SECONDS,
 ) -> Path:
     """Publish a finalized artifact directory through a hidden staging directory.
@@ -331,7 +338,11 @@ def publish_artifact_directory(
     if stale_publish_seconds < 0:
         raise ValueError("stale_publish_seconds must be nonnegative")
     artifact_dir = Path(artifact_dir)
-    manifest = finalize_artifact_directory(artifact_dir)
+    manifest = finalize_artifact_directory(
+        artifact_dir,
+        notebook=notebook,
+        run_id=run_id,
+    )
     destination = Path(drive_output_root) / manifest["notebook"] / manifest["run_id"]
     if _same_path(artifact_dir, destination):
         return artifact_dir

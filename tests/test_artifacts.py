@@ -18,6 +18,18 @@ from cbir.artifacts import (
 
 
 class ArtifactRunTests(unittest.TestCase):
+    def test_publish_finalizes_a_new_run_with_its_own_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run = create_artifact_run(root / "outputs", "02", run_id="new-run")
+            run.write_json("metrics.json", {"ok": True})
+
+            destination = run.publish(root / "drive")
+
+            self.assertEqual(destination, root / "drive" / "02" / "new-run")
+            report = validate_artifact_directory(destination)
+            self.assertTrue(report["valid"], report["errors"])
+
     def test_finalize_publish_and_idempotent_retry(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
