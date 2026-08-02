@@ -39,12 +39,18 @@ def plot_series(
     ylabel: str | None = None,
     colors: Mapping[str, str] | None = None,
     markers: Mapping[str, str] | None = None,
+    legend_title: str | None = None,
     error_bars: bool = True,
     ax: object | None = None,
     save_path: Path | None = None,
     save_dpi: int = 300,
 ) -> tuple[object, object]:
     """Plot arbitrary named series with stable colors, legends, and error support.
+
+    ``legend_title`` explains what the named, coloured series represent.  For
+    example, use ``"Pooling temperature (τₚ)"`` when each series is one
+    temperature value, rather than leaving a reader to infer that from labels
+    such as ``0.05`` and ``0.1``.
 
     When ``save_path`` is supplied, the default 300 DPI is suitable for inserting
     the generated PNG directly into a course report.  Pass a lower ``save_dpi``
@@ -85,7 +91,7 @@ def plot_series(
     if ylabel:
         axis.set_ylabel(ylabel)
     axis.grid(True, alpha=0.3)
-    axis.legend()
+    axis.legend(title=legend_title)
     figure.tight_layout()
     if save_path is not None:
         save_path = Path(save_path)
