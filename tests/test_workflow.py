@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import torch
@@ -10,11 +11,14 @@ from cbir.cache import FeatureManifest, FeatureShardReader, FeatureShardWriter, 
 from cbir.config import (
     BackboneConfig,
     FeatureCacheConfig,
+    FusionConfig,
     PoolingConfig,
     PreprocessConfig,
     ProjectConfig,
     SfmConfig,
+    TrainingConfig,
     extraction_fingerprint,
+    train_fingerprint,
 )
 from cbir.data.sfm import ImageRecord, Sfm30kMetadata
 from cbir.data.transforms import PreprocessRecord
@@ -136,6 +140,34 @@ class SfmCacheWorkflowTests(unittest.TestCase):
             reader = FeatureShardReader(restored.local_dir)
             self.assertEqual(reader.image_ids, expected_ids)
             self.assertEqual(tuple(reader.fetch(("val-image",))["cls"].shape), (1, 2, 4))
+
+    def test_descriptor_dimension_changes_training_not_cache_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            base_config = self._config(root)
+            metadata = self._metadata()
+            fusion_256 = FusionConfig(token_dim=4, layer_indices=(0, 1), output_dim=256)
+            fusion_128 = replace(fusion_256, output_dim=128)
+            config_256 = replace(base_config, fusion=fusion_256)
+            config_128 = replace(base_config, fusion=fusion_128)
+            training = TrainingConfig(batch_size=2, epochs=1, device="cpu")
+
+            self.assertEqual(
+                full_sfm_cache_location(config_256, metadata).fingerprint,
+                full_sfm_cache_location(config_128, metadata).fingerprint,
+            )
+            self.assertNotEqual(
+                train_fingerprint(
+                    cache_fingerprint="cache-fingerprint",
+                    fusion=fusion_256,
+                    training=training,
+                ),
+                train_fingerprint(
+                    cache_fingerprint="cache-fingerprint",
+                    fusion=fusion_128,
+                    training=training,
+                ),
+            )
 
 
 if __name__ == "__main__":

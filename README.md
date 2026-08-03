@@ -46,7 +46,8 @@ The intended order is:
 2. `02_data_and_feature_cache.ipynb` runs smoke checks, stages SfM-30k,
    performs the pooling-temperature pilot, and builds/resumes the feature cache.
 3. `03_hyperparameter_tuning.ipynb` restores the completed cache, runs
-   SfM-only ablations, and writes a selected-checkpoint lock file.
+   SfM-only ablations, audits whether the three gate variants genuinely differ,
+   and writes a selected-checkpoint lock file.
 4. `04_final_runs_and_revisitop.ipynb` restores that lock, stages RevisitOP,
    and performs the final held-out evaluation.
 
@@ -86,8 +87,17 @@ MyDrive/lightweight-cbir/
 Use `configs/colab.yaml` for all three stages.  Once the pooling pilot selects a
 temperature, set it there *before* full extraction.  Keep the same backbone,
 preprocessing, and pooling fields for cache extraction, training, and final
-evaluation.  For the final reproducible run, replace `revision: main` with the
-tested immutable DINOv2 Git revision.
+evaluation. The checked-in Colab profile already pins the tested immutable
+DINOv2 revision; retain that value for comparable cache and training artifacts.
+
+Notebook 03 uses the reference 256-D fusion descriptor by default. For a
+separate 128-D compactness ablation, set `FUSION_OUTPUT_DIM_OVERRIDE = 128` in
+its first cell before running that notebook in a fresh runtime. This changes
+only the small trainable fusion head, so it intentionally reuses the completed
+frozen cache. The effective configuration, training fingerprint, checkpoint
+path, and output artifact all record the dimension; compare it with the 256-D
+reference only through their SfM-only validation results before selecting a
+final model.
 
 ## Kaggle workflow
 
