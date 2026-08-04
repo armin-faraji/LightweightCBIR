@@ -15,7 +15,7 @@ preprocess:
   long_side: 224
   patch_size: 14
 pooling:
-  temperature: 0.1
+  temperature: 0.025
   all_layer_indices: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 cache:
   local_root: /content/cbir_cache
