@@ -27,8 +27,8 @@ sfm:
 fusion:
   layer_indices: [3, 7, 11]
   output_dim: 256
+  head_kind: global_local
   local_kind: cls_guided_patch
-  gate_mode: reliability
+  gate_mode: dynamic
 training:
   device: cuda
-

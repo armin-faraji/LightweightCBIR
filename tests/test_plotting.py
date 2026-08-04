@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from cbir.plotting import SeriesData, plot_series
+from cbir.plotting import HorizontalReference, SeriesData, plot_series
 
 
 class PlottingTests(unittest.TestCase):
@@ -58,6 +58,24 @@ class PlottingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "together with ax"):
                 plot_series(self._series(), ax=axis, fig_size=(12, 6))
         finally:
+            plt.close(figure)
+
+    def test_horizontal_reference_is_in_the_legend(self) -> None:
+        figure, axis = plot_series(
+            self._series(),
+            horizontal_references={
+                "Final CLS — 384-D (frozen)": HorizontalReference(0.92),
+            },
+        )
+        try:
+            self.assertEqual(len(axis.lines), 2)
+            legend = axis.get_legend()
+            self.assertIsNotNone(legend)
+            labels = [text.get_text() for text in legend.get_texts()]
+            self.assertIn("Final CLS — 384-D (frozen)", labels)
+        finally:
+            import matplotlib.pyplot as plt
+
             plt.close(figure)
 
 

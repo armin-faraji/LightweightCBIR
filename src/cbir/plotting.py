@@ -32,6 +32,22 @@ class SeriesData:
             raise ValueError("confidence band lengths differ from x")
 
 
+@dataclass(frozen=True)
+class HorizontalReference:
+    """A labelled horizontal reference line for a plot."""
+
+    value: float
+    color: str = "black"
+    linestyle: str = "--"
+    linewidth: float = 1.5
+
+    def __post_init__(self) -> None:
+        if not isfinite(float(self.value)):
+            raise ValueError("horizontal reference value must be finite")
+        if not isfinite(float(self.linewidth)) or self.linewidth <= 0:
+            raise ValueError("horizontal reference linewidth must be positive")
+
+
 def plot_series(
     series: Mapping[str, SeriesData],
     *,
@@ -40,6 +56,7 @@ def plot_series(
     ylabel: str | None = None,
     colors: Mapping[str, str] | None = None,
     markers: Mapping[str, str] | None = None,
+    horizontal_references: Mapping[str, HorizontalReference] | None = None,
     legend_title: str | None = None,
     error_bars: bool = True,
     fig_size: Sequence[float] | None = None,
@@ -95,6 +112,14 @@ def plot_series(
                 color=color,
                 alpha=0.18,
             )
+    for name, reference in (horizontal_references or {}).items():
+        axis.axhline(
+            reference.value,
+            label=name,
+            color=reference.color,
+            linestyle=reference.linestyle,
+            linewidth=reference.linewidth,
+        )
     if title:
         axis.set_title(title)
     if xlabel:

@@ -1,4 +1,4 @@
-"""Cached-pair training for the RGMF head using symmetric InfoNCE."""
+"""Cached-pair training for compact descriptor heads using symmetric InfoNCE."""
 
 from __future__ import annotations
 
@@ -12,13 +12,14 @@ from typing import Any, Callable, Iterator, Sequence
 
 import torch
 import torch.nn.functional as functional
+from torch import nn
 from torch.utils.data import DataLoader, Dataset, Sampler
 
 from .cache import FeatureShardReader
 from .config import FusionConfig, TrainingConfig, config_to_dict
 from .data.sfm import PairRecord, ValidationCase
 from .evaluation import SfmRetrievalReport, descriptors_from_cache, evaluate_sfm_verified_pairs
-from .fusion import ReliabilityGatedFusion
+from .fusion import FusionDiagnostics
 from .utils import assert_finite, l2_normalize, seed_everything
 
 
@@ -187,12 +188,12 @@ class TrainingHistory:
 
 
 class HeadTrainer:
-    """Train only the RGMF head from a validated feature cache."""
+    """Train only a compact descriptor head from a validated feature cache."""
 
     def __init__(
         self,
         *,
-        head: ReliabilityGatedFusion,
+        head: nn.Module,
         reader: FeatureShardReader,
         train_pairs: Sequence[PairRecord],
         fusion_config: FusionConfig,
@@ -302,19 +303,24 @@ class HeadTrainer:
         self.head.train()
         total_loss = 0.0
         batches = 0
-        lambda_values: list[float] = []
+        entropy_penalty_scales: list[float] = []
         for batch in loader:
             query = {name: value.to(self.device) for name, value in batch["query"].items()}
             positive = {
                 name: value.to(self.device) for name, value in batch["positive"].items()
             }
             self.optimizer.zero_grad(set_to_none=True)
-            query_descriptor, query_diag = self.head(
+            query_output = self.head(
                 query["cls"],
                 query["local"],
                 query["entropy"],
                 return_diagnostics=True,
             )
+            if not isinstance(query_output, tuple):
+                raise TypeError("descriptor head did not return diagnostics")
+            query_descriptor, query_diag = query_output
+            if not isinstance(query_diag, FusionDiagnostics):
+                raise TypeError("descriptor head returned unsupported diagnostics")
             positive_descriptor = self.head(
                 positive["cls"],
                 positive["local"],
@@ -330,13 +336,20 @@ class HeadTrainer:
             loss.backward()
             self.optimizer.step()
             total_loss += float(loss.detach().cpu())
-            lambda_values.append(float(query_diag.lambda_value.detach().cpu()))
+            if query_diag.entropy_penalty_scale is not None:
+                entropy_penalty_scales.append(
+                    float(query_diag.entropy_penalty_scale.detach().cpu())
+                )
             batches += 1
         if batches == 0:
             raise RuntimeError("training epoch produced no batches")
         return {
             "loss": total_loss / batches,
-            "lambda": float(sum(lambda_values) / len(lambda_values)),
+            "entropy_penalty_scale": (
+                float(sum(entropy_penalty_scales) / len(entropy_penalty_scales))
+                if entropy_penalty_scales
+                else 0.0
+            ),
             "learning_rate": float(self.optimizer.param_groups[0]["lr"]),
         }
 

@@ -85,8 +85,13 @@ class FusionConfig:
     token_dim: int = 384
     layer_indices: tuple[int, ...] = (3, 7, 11)
     output_dim: int = 256
+    head_kind: Literal[
+        "global_local",
+        "cls_concat",
+        "final_cls_projection",
+    ] = "global_local"
     local_kind: Literal["cls_guided_patch", "mean_patch"] = "cls_guided_patch"
-    gate_mode: Literal["uniform", "static", "reliability"] = "reliability"
+    gate_mode: Literal["uniform", "static", "dynamic"] | None = "dynamic"
     eps: float = 1e-12
 
     def __post_init__(self) -> None:
@@ -96,6 +101,21 @@ class FusionConfig:
             raise ValueError("layer_indices must not contain duplicates")
         if self.token_dim <= 0 or self.output_dim <= 0 or self.eps <= 0:
             raise ValueError("invalid fusion dimensions or epsilon")
+        if self.head_kind == "global_local":
+            if self.gate_mode not in {"uniform", "static", "dynamic"}:
+                raise ValueError(
+                    "global_local heads require uniform, static, or dynamic layer weighting"
+                )
+        elif self.head_kind == "cls_concat":
+            if self.gate_mode is not None:
+                raise ValueError("cls_concat heads must use gate_mode=None")
+        elif self.head_kind == "final_cls_projection":
+            if len(self.layer_indices) != 1:
+                raise ValueError("final_cls_projection requires exactly one layer")
+            if self.gate_mode is not None:
+                raise ValueError("final_cls_projection heads must use gate_mode=None")
+        else:
+            raise ValueError(f"unsupported head_kind: {self.head_kind}")
 
 
 @dataclass(frozen=True)

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 import torch
+from torch import nn
 
 from cbir.backbone import FrozenDinoV2Extractor
 from cbir.cache import sha256_file
@@ -21,7 +22,7 @@ from cbir.evaluation import (
     ranked_ids_from_descriptors,
 )
 from cbir.features import FeatureExtractionRunner
-from cbir.fusion import ReliabilityGatedFusion
+from cbir.fusion import build_descriptor_head
 from cbir.utils import atomic_write_json, stable_hash
 
 
@@ -45,7 +46,7 @@ def main() -> None:
     config = load_project_config(args.config)
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     fusion_config = _fusion_from_checkpoint(checkpoint)
-    head = ReliabilityGatedFusion.from_config(fusion_config)
+    head = build_descriptor_head(fusion_config)
     head.load_state_dict(checkpoint["model_state_dict"])
     head.eval()
     if "cache_fingerprint" not in checkpoint:
@@ -152,7 +153,7 @@ def _load_or_extract_bundle(
     ids: Sequence[str],
     image_loader: Callable[[str], object],
     runner: FeatureExtractionRunner,
-    head: ReliabilityGatedFusion,
+    head: nn.Module,
     fusion_config: FusionConfig,
     chunk_size: int,
     backbone_batch_size: int,

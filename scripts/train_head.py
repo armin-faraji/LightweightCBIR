@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train a frozen-feature RGMF head and save SfM-validation-selected checkpoint."""
+"""Train a frozen-feature compact descriptor head and save its best checkpoint."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from cbir.config import (
 )
 from cbir.data.sfm import Sfm30kMetadata
 from cbir.evaluation import evaluate_sfm_verified_pairs, final_cls_descriptors_from_cache
-from cbir.fusion import ReliabilityGatedFusion
+from cbir.fusion import build_descriptor_head
 from cbir.training import HeadTrainer
 from cbir.utils import atomic_write_json
 
@@ -68,7 +68,7 @@ def main() -> None:
         f"R@1={baseline_report.recall_at_1:.4f}, MRR={baseline_report.mrr:.4f}"
     )
 
-    head = ReliabilityGatedFusion.from_config(config.fusion)
+    head = build_descriptor_head(config.fusion)
     run_fingerprint = train_fingerprint(
         cache_fingerprint=reader.manifest.fingerprint,
         fusion=config.fusion,

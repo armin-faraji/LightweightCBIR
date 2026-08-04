@@ -11,7 +11,7 @@ import torch
 
 from cbir.config import FusionConfig, TrainingConfig
 from cbir.data.sfm import PairRecord
-from cbir.fusion import ReliabilityGatedFusion
+from cbir.fusion import MultiLevelGlobalLocalFusion, build_descriptor_head
 from cbir.training import ClusterUniquePairBatchSampler, HeadTrainer, symmetric_info_nce
 
 
@@ -45,7 +45,7 @@ class TrainingTests(unittest.TestCase):
             early_stopping_patience=3,
             device="cpu",
         )
-        head = ReliabilityGatedFusion.from_config(fusion_config)
+        head = MultiLevelGlobalLocalFusion.from_config(fusion_config)
         # ``fit`` only needs a real cache reader inside the collator, which is
         # bypassed here by the focused epoch-method patch below.  The genuine
         # checkpoint writer still records the cache fingerprint.
@@ -80,9 +80,9 @@ class TrainingTests(unittest.TestCase):
             # when no validation set is configured.
             metrics = iter(
                 (
-                    {"loss": 3.0, "lambda": 0.1, "learning_rate": 1e-3},
-                    {"loss": 2.0, "lambda": 0.1, "learning_rate": 1e-3},
-                    {"loss": 2.5, "lambda": 0.1, "learning_rate": 1e-3},
+                    {"loss": 3.0, "entropy_penalty_scale": 0.1, "learning_rate": 1e-3},
+                    {"loss": 2.0, "entropy_penalty_scale": 0.1, "learning_rate": 1e-3},
+                    {"loss": 2.5, "entropy_penalty_scale": 0.1, "learning_rate": 1e-3},
                 )
             )
             # The focused epoch stub does not perform a real optimizer step,
@@ -101,6 +101,68 @@ class TrainingTests(unittest.TestCase):
             self.assertEqual(history.best_epoch, 1)
             self.assertEqual(history.best_metric, -2.0)
             self.assertEqual(history.best_checkpoint, Path(temporary) / "best.pt")
+
+    def test_cls_concat_head_uses_the_common_training_pipeline(self) -> None:
+        """CLS-only ablations must not need a separate trainer or cache format."""
+
+        torch.manual_seed(19)
+        fusion_config = FusionConfig(
+            token_dim=4,
+            layer_indices=(0, 1),
+            output_dim=3,
+            head_kind="cls_concat",
+            gate_mode=None,
+        )
+        training_config = TrainingConfig(
+            batch_size=2,
+            epochs=1,
+            early_stopping_patience=1,
+            device="cpu",
+        )
+        feature_by_id = {
+            image_id: {
+                "cls": torch.randn(2, 4),
+                "local": torch.randn(2, 4),
+                "entropy": torch.rand(2),
+            }
+            for image_id in ("q0", "p0", "q1", "p1")
+        }
+
+        class TinyReader:
+            manifest = SimpleNamespace(
+                fingerprint="cache-fingerprint",
+                extraction_config={"backbone": "tiny"},
+            )
+
+            @staticmethod
+            def fetch(image_ids, *, layer_indices, local_kind):
+                self.assertEqual(tuple(layer_indices), (0, 1))
+                self.assertEqual(local_kind, "cls_guided_patch")
+                return {
+                    name: torch.stack([feature_by_id[image_id][name] for image_id in image_ids])
+                    for name in ("cls", "local", "entropy")
+                }
+
+        pairs = (
+            PairRecord("q0", "p0", 0, "train"),
+            PairRecord("q1", "p1", 1, "train"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            trainer = HeadTrainer(
+                head=build_descriptor_head(fusion_config),
+                reader=TinyReader(),  # type: ignore[arg-type]
+                train_pairs=pairs,
+                fusion_config=fusion_config,
+                training_config=training_config,
+                output_dir=Path(temporary),
+            )
+            history = trainer.fit()
+
+            self.assertEqual(history.best_epoch, 0)
+            self.assertIsNotNone(history.best_checkpoint)
+            checkpoint = torch.load(history.best_checkpoint, map_location="cpu", weights_only=False)
+            self.assertEqual(checkpoint["fusion_config"]["head_kind"], "cls_concat")
+            self.assertIsNone(checkpoint["fusion_config"]["gate_mode"])
 
 
 if __name__ == "__main__":

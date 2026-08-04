@@ -2,9 +2,9 @@
 
 This repository implements the course project **Content-Based Image Retrieval
 Using Multi-Level Deep Embeddings**.  It freezes DINOv2 ViT-S/14 with registers,
-caches all-layer global/local aggregates, trains a small Reliability-Gated
-Multi-Level Global-Local Fusion (RGMF) head on retrieval-SfM-30k pairs, and
-evaluates a locked model on Revisited Oxford and Paris.
+caches all-layer global/local aggregates, trains compact global-local and
+CLS-only descriptor heads on retrieval-SfM-30k pairs, and evaluates a locked
+model on Revisited Oxford and Paris.
 
 ## Repository layout
 
@@ -27,7 +27,8 @@ tabs through URLs of this form after pushing the repository to GitHub:
 ```text
 https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/notebooks/02_data_and_feature_cache.ipynb
 https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/notebooks/03_hyperparameter_tuning.ipynb
-https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/notebooks/04_final_runs_and_revisitop.ipynb
+https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/notebooks/04_descriptor_dimension_selection.ipynb
+https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/notebooks/05_final_runs_and_revisitop.ipynb
 ```
 
 The first cell of each notebook mounts Drive, clones a project revision to
@@ -45,13 +46,15 @@ The intended order is:
    its conclusion is already recorded: use DINOv2 ViT-S/14 with registers.
 2. `02_data_and_feature_cache.ipynb` runs smoke checks, stages SfM-30k,
    performs the pooling-temperature pilot, and builds/resumes the feature cache.
-3. `03_hyperparameter_tuning.ipynb` restores the completed cache, runs
-   SfM-only ablations, audits whether the three gate variants genuinely differ,
-   and writes a selected-checkpoint lock file.
-4. `04_final_runs_and_revisitop.ipynb` restores that lock, stages RevisitOP,
-   and performs the final held-out evaluation.
+3. `03_hyperparameter_tuning.ipynb` restores the completed cache, runs fixed
+   256-D SfM-only layer-set and representation ablations, and records a
+   manually selected layer set.
+4. `04_descriptor_dimension_selection.ipynb` compares descriptor dimensions
+   for that selected layer set and writes the final-model lock file.
+5. `05_final_runs_and_revisitop.ipynb` restores that final lock, stages
+   RevisitOP, and performs the held-out evaluation.
 
-Each active cloud-stage notebook (02–04) writes report-ready artifacts under
+Each active cloud-stage notebook (02–05) writes report-ready artifacts under
 `outputs/<notebook-number>/<run-id>/`, including figures, metrics, configuration,
 and runtime provenance.  Its final **Publish outputs to Drive** cell validates
 and publishes them to:
@@ -90,14 +93,17 @@ preprocessing, and pooling fields for cache extraction, training, and final
 evaluation. The checked-in Colab profile already pins the tested immutable
 DINOv2 revision; retain that value for comparable cache and training artifacts.
 
-Notebook 03 uses the reference 256-D fusion descriptor by default. For a
-separate 128-D compactness ablation, set `FUSION_OUTPUT_DIM_OVERRIDE = 128` in
-its first cell before running that notebook in a fresh runtime. This changes
-only the small trainable fusion head, so it intentionally reuses the completed
-frozen cache. The effective configuration, training fingerprint, checkpoint
-path, and output artifact all record the dimension; compare it with the 256-D
-reference only through their SfM-only validation results before selecting a
-final model.
+Notebook 03 is intentionally fixed at 256-D, so layer-set comparisons do not
+mix descriptor capacity with layer selection. Notebook 04 performs the
+128-D-versus-256-D compactness comparison after the student manually selects a
+layer set. Both notebooks reuse the completed frozen feature cache.
+
+The three global-local weighting variants are:
+
+- **Uniform layer weighting:** equal contribution from selected layers.
+- **Static layer weighting:** learned but image-independent layer weights.
+- **Dynamic layer weighting:** per-image weights from Layer-wise
+  Entropy-Modulated Gating (LEMG).
 
 ## Kaggle workflow
 
@@ -154,4 +160,5 @@ checkpoint.
   and token convention changes require a new cache.
 - Build InfoNCE batches with at most one pair from each SfM cluster.
 - Do not call pair-only SfM validation “mAP.”
-- Do not choose layers, temperature, seed, or checkpoint using RevisitOP labels.
+- Do not choose layers, descriptor dimension, temperature, seed, or checkpoint
+  using RevisitOP labels.

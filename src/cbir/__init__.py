@@ -12,7 +12,12 @@ from .config import (
     TrainingConfig,
     load_project_config,
 )
-from .fusion import ReliabilityGatedFusion
+from .fusion import (
+    FinalClsProjectionHead,
+    MultiLevelClsConcatHead,
+    MultiLevelGlobalLocalFusion,
+    build_descriptor_head,
+)
 
 __all__ = [
     "BackboneConfig",
@@ -22,8 +27,11 @@ __all__ = [
     "PoolingConfig",
     "PreprocessConfig",
     "ProjectConfig",
-    "ReliabilityGatedFusion",
+    "FinalClsProjectionHead",
+    "MultiLevelClsConcatHead",
+    "MultiLevelGlobalLocalFusion",
     "SfmConfig",
     "TrainingConfig",
+    "build_descriptor_head",
     "load_project_config",
 ]
