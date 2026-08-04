@@ -26,7 +26,7 @@ tabs through URLs of this form after pushing the repository to GitHub:
 
 ```text
 https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/notebooks/02_data_and_feature_cache.ipynb
-https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/notebooks/03_hyperparameter_tuning.ipynb
+https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/notebooks/03_layer_set_selection.ipynb
 https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/notebooks/04_descriptor_dimension_selection.ipynb
 https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/notebooks/05_final_runs_and_revisitop.ipynb
 ```
@@ -46,7 +46,7 @@ The intended order is:
    its conclusion is already recorded: use DINOv2 ViT-S/14 with registers.
 2. `02_data_and_feature_cache.ipynb` runs smoke checks, stages SfM-30k,
    performs the pooling-temperature pilot, and builds/resumes the feature cache.
-3. `03_hyperparameter_tuning.ipynb` restores the completed cache, runs fixed
+3. `03_layer_set_selection.ipynb` restores the completed cache, runs fixed
    256-D SfM-only layer-set and representation ablations, and records a
    manually selected layer set.
 4. `04_descriptor_dimension_selection.ipynb` compares descriptor dimensions
