@@ -201,7 +201,10 @@ def finalize_artifact_directory(
     if not artifact_dir.is_dir() or artifact_dir.is_symlink():
         raise FileNotFoundError(f"artifact directory does not exist: {artifact_dir}")
 
-    existing = _read_manifest_if_present(artifact_dir)
+    # Older notebook runs may contain a valid manifest whose file records were
+    # emitted in filesystem order.  Finalization rewrites it canonically; strict
+    # ordering remains required when validating a completed published artifact.
+    existing = _read_manifest_if_present(artifact_dir, allow_unsorted=True)
     resolved_notebook = _safe_component(
         notebook or (existing or {}).get("notebook", ""),
         field_name="notebook",
@@ -460,16 +463,24 @@ def _safe_relative_path(value: str | Path) -> PurePosixPath:
     return path
 
 
-def _read_manifest_if_present(artifact_dir: Path) -> dict[str, Any] | None:
+def _read_manifest_if_present(
+    artifact_dir: Path,
+    *,
+    allow_unsorted: bool = False,
+) -> dict[str, Any] | None:
     path = artifact_dir / ARTIFACT_MANIFEST_NAME
     if not path.exists():
         return None
     if not path.is_file():
         raise ValueError(f"{ARTIFACT_MANIFEST_NAME} is not a regular file")
-    return _validate_manifest_structure(read_json(path))
+    return _validate_manifest_structure(read_json(path), require_sorted=not allow_unsorted)
 
 
-def _validate_manifest_structure(raw: Any) -> dict[str, Any]:
+def _validate_manifest_structure(
+    raw: Any,
+    *,
+    require_sorted: bool = True,
+) -> dict[str, Any]:
     if not isinstance(raw, Mapping):
         raise ValueError("manifest must be a mapping")
     if int(raw.get("schema_version", -1)) != ARTIFACT_SCHEMA_VERSION:
@@ -500,7 +511,7 @@ def _validate_manifest_structure(raw: Any) -> dict[str, Any]:
         if len(sha256) != 64 or any(char not in "0123456789abcdef" for char in sha256):
             raise ValueError(f"invalid SHA-256 digest for {relative}")
         files.append({"path": relative, "bytes": byte_count, "sha256": sha256})
-    if files != sorted(files, key=lambda item: item["path"]):
+    if require_sorted and files != sorted(files, key=lambda item: item["path"]):
         raise ValueError("manifest file records must be sorted by path")
     return {
         "schema_version": ARTIFACT_SCHEMA_VERSION,

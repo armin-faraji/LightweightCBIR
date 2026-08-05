@@ -15,6 +15,7 @@ from cbir.artifacts import (
     publish_artifact_directory,
     validate_artifact_directory,
 )
+from cbir.utils import atomic_write_json, read_json
 
 
 class ArtifactRunTests(unittest.TestCase):
@@ -89,6 +90,22 @@ class ArtifactRunTests(unittest.TestCase):
             report = validate_artifact_directory(run.local_dir)
             self.assertFalse(report["valid"])
             self.assertTrue(any("checksum mismatch" in error for error in report["errors"]))
+
+    def test_finalize_repairs_legacy_unsorted_local_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run = create_artifact_run(Path(temporary), "04", run_id="legacy-run")
+            run.write_json("a.json", {"a": 1})
+            run.write_json("z.json", {"z": 1})
+            run.finalize()
+            manifest_path = run.local_dir / ARTIFACT_MANIFEST_NAME
+            legacy_manifest = read_json(manifest_path)
+            legacy_manifest["files"] = list(reversed(legacy_manifest["files"]))
+            atomic_write_json(manifest_path, legacy_manifest)
+
+            run.finalize()
+
+            report = validate_artifact_directory(run.local_dir)
+            self.assertTrue(report["valid"], report["errors"])
 
     def test_requires_complete_marker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
