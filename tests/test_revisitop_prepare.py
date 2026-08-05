@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
+from cbir.data.revisitop import RevisitOPDataset
 from cbir.data.revisitop_prepare import (
     _extract_expected_images_from_archive,
     _download_annotation_with_repair,
@@ -22,6 +23,35 @@ from cbir.data.revisitop_prepare import (
 
 
 class RevisitOPPreparationTests(unittest.TestCase):
+    def test_loads_official_style_numeric_ground_truth_indices(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            annotation_path = Path(temporary) / "gnd_roxford5k.pkl"
+            raw = {
+                "imlist": ["building_a", "building_b", "building_c"],
+                "qimlist": ["building_a"],
+                "gnd": [
+                    {
+                        "bbx": [0, 0, 4, 4],
+                        "easy": [1],
+                        "hard": [2],
+                        "junk": [0],
+                    }
+                ],
+            }
+            with annotation_path.open("wb") as handle:
+                pickle.dump(raw, handle)
+
+            dataset = RevisitOPDataset.from_ground_truth_pickle(
+                name="roxford5k",
+                ground_truth_path=annotation_path,
+                image_root=Path(temporary) / "jpg",
+            )
+
+            ground_truth = dataset.ground_truth["building_a"]
+            self.assertEqual(ground_truth.easy, frozenset({"building_b"}))
+            self.assertEqual(ground_truth.hard, frozenset({"building_c"}))
+            self.assertEqual(ground_truth.junk, frozenset({"building_a"}))
+
     def test_default_validation_rejects_nonofficial_counts(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "roxford5k"

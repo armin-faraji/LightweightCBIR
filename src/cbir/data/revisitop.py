@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pickle
 from dataclasses import dataclass
+from numbers import Integral
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -79,9 +80,9 @@ class RevisitOPDataset:
             )
             ground_truth[query_id] = RevisitGroundTruth(
                 query_id=query_id,
-                easy=frozenset(str(value) for value in entry.get("easy", [])),
-                hard=frozenset(str(value) for value in entry.get("hard", [])),
-                junk=frozenset(str(value) for value in entry.get("junk", [])),
+                easy=_ground_truth_ids(entry.get("easy", []), database_ids, query_id),
+                hard=_ground_truth_ids(entry.get("hard", []), database_ids, query_id),
+                junk=_ground_truth_ids(entry.get("junk", []), database_ids, query_id),
             )
         return cls(
             name=name,
@@ -147,6 +148,36 @@ def crop_revisit_query(
             f"bbox {bbox_xyxy} lies outside image size {(image.width, image.height)}"
         )
     return image.crop((left, top, right, bottom))
+
+
+def _ground_truth_ids(
+    values: Iterable[object], database_ids: Sequence[str], query_id: str
+) -> frozenset[str]:
+    """Resolve official RevisitOP ground-truth indices to database image IDs.
+
+    The official ``gnd_*.pkl`` files store ``easy``, ``hard``, and ``junk`` as
+    zero-based indices into ``imlist``.  Direct image IDs are also accepted for
+    small hand-written fixtures used by this project.
+    """
+    resolved: set[str] = set()
+    database = set(database_ids)
+    for value in values:
+        if isinstance(value, Integral) and not isinstance(value, bool):
+            index = int(value)
+            if not 0 <= index < len(database_ids):
+                raise ValueError(
+                    f"ground-truth index {index} for {query_id} lies outside "
+                    f"the database of {len(database_ids)} images"
+                )
+            resolved.add(database_ids[index])
+        elif isinstance(value, str) and value in database:
+            resolved.add(value)
+        else:
+            raise ValueError(
+                f"invalid ground-truth reference {value!r} for {query_id}; "
+                "expected a database index or image ID"
+            )
+    return frozenset(resolved)
 
 
 def _load_pil(path: Path) -> Image.Image:
