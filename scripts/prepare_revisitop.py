@@ -90,7 +90,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-image-verification",
         action="store_true",
-        help="Skip JPEG decode validation (faster, but not recommended for final evaluation).",
+        help="Skip JPEG decode validation and retain only structural file checks.",
     )
     parser.add_argument(
         "--allow-nonofficial-counts",

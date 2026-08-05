@@ -191,19 +191,9 @@ def prepare_revisitop_datasets(
             # downloads for a later retry; never delete user-visible data here.
             raise
 
-        completed = validate_revisitop_dataset(
-            target_dir,
-            dataset,
-            verify_images=verify_images,
-            enforce_official_counts=enforce_official_counts,
-        )
-        if not completed["valid"]:
-            raise RuntimeError(
-                f"{dataset} failed validation after publication: {completed['errors'][:5]}"
-            )
         if chosen_mode == "download" and not keep_archives:
             _remove_completed_archives(output_root, dataset, source_urls)
-        reports[dataset] = {"status": "prepared", **completed, "source": source_report}
+        reports[dataset] = {"status": "prepared", **validation, "source": source_report}
 
     report = {
         "output_root": str(output_root),
@@ -344,29 +334,17 @@ def _stage_from_existing(
     *,
     enforce_official_counts: bool,
 ) -> dict[str, Any]:
-    # Check source layout and every required filename first.  Decode validation is
-    # intentionally deferred to the copied staging directory so Drive staging does
-    # not decode roughly 11k images twice.
-    source_validation = validate_revisitop_dataset(
-        source_dataset,
-        dataset,
-        verify_images=False,
-        enforce_official_counts=enforce_official_counts,
-    )
-    if not source_validation["valid"]:
-        raise ValueError(
-            f"existing RevisitOP source is invalid: {source_dataset}; "
-            f"errors: {source_validation['errors'][:5]}"
-        )
     source_gnd = source_dataset / f"gnd_{dataset}.pkl"
     target_gnd = stage_dir / source_gnd.name
-    _ensure_owned_directory(stage_dir / "jpg")
-    _copy_file_atomic(source_gnd, target_gnd)
     descriptor = RevisitOPDataset.from_ground_truth_pickle(
         name=dataset,
-        ground_truth_path=target_gnd,
-        image_root=stage_dir / "jpg",
+        ground_truth_path=source_gnd,
+        image_root=source_dataset / "jpg",
     )
+    if enforce_official_counts:
+        _assert_official_counts(descriptor, dataset)
+    _ensure_owned_directory(stage_dir / "jpg")
+    _copy_file_atomic(source_gnd, target_gnd)
     source_image_root = source_dataset / "jpg"
     for image_id in _required_image_ids(descriptor):
         filename = _image_filename(image_id)
@@ -374,7 +352,6 @@ def _stage_from_existing(
     return {
         "kind": "existing_source",
         "source_dataset": str(source_dataset),
-        "validation": source_validation,
     }
 
 
@@ -405,7 +382,7 @@ def _stage_from_official_downloads(
     archives: list[dict[str, str]] = []
     for archive_url in urls.archive_urls(dataset):
         archive_path = download_dir / Path(archive_url).name
-        _download_archive_with_repair(archive_url, archive_path, repair=repair)
+        _download_archive(archive_url, archive_path)
         try:
             _extract_expected_images_from_archive(
                 archive_path,
@@ -420,7 +397,7 @@ def _stage_from_official_downloads(
                     "Rerun with repair=True / --repair to redownload this module-owned file."
                 ) from error
             _discard_owned_download(archive_path)
-            _download_archive_with_repair(archive_url, archive_path, repair=False)
+            _download_archive(archive_url, archive_path)
             _extract_expected_images_from_archive(
                 archive_path,
                 stage_dir / "jpg",
@@ -492,32 +469,11 @@ def _download_annotation_with_repair(
     raise AssertionError("annotation repair loop should either return or raise")
 
 
-def _download_archive_with_repair(
-    archive_url: str,
-    destination: Path,
-    *,
-    repair: bool,
-) -> None:
-    """Download and header-validate a tar archive, with explicit repair support."""
+def _download_archive(archive_url: str, destination: Path) -> None:
+    """Download an archive; extraction performs the single full integrity pass."""
     if Path(destination).is_symlink():
         raise RuntimeError(f"refusing to download through a symlink: {destination}")
-    for attempt in range(2 if repair else 1):
-        download_with_resume(archive_url, destination)
-        try:
-            with tarfile.open(destination, mode="r:*") as archive:
-                # Iterate headers now so a truncated archive fails before extraction.
-                for _ in archive:
-                    pass
-            return
-        except (tarfile.TarError, OSError) as error:
-            if attempt == 0 and repair:
-                _discard_owned_download(destination)
-                continue
-            raise RuntimeError(
-                f"downloaded RevisitOP archive is invalid: {destination}: {error}. "
-                "Use repair=True / --repair to replace this module-owned file."
-            ) from error
-    raise AssertionError("archive repair loop should either return or raise")
+    download_with_resume(archive_url, destination)
 
 
 def _discard_owned_download(path: Path) -> None:

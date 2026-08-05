@@ -15,7 +15,7 @@ from cbir.data.revisitop import RevisitOPDataset
 from cbir.data.revisitop_prepare import (
     _extract_expected_images_from_archive,
     _download_annotation_with_repair,
-    _download_archive_with_repair,
+    _download_archive,
     prepare_revisitop_datasets,
     publish_revisitop_datasets,
     validate_revisitop_dataset,
@@ -176,7 +176,7 @@ class RevisitOPPreparationTests(unittest.TestCase):
                     enforce_official_counts=False,
                 )
 
-    def test_repair_replaces_corrupt_owned_archive(self) -> None:
+    def test_archive_download_defers_full_validation_to_extraction(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             archive_path = Path(temporary) / "download.tgz"
             archive_path.write_bytes(b"not-a-tar-file")
@@ -185,23 +185,35 @@ class RevisitOPPreparationTests(unittest.TestCase):
             def fake_download(url: str, destination: Path) -> Path:
                 nonlocal calls
                 calls += 1
-                if calls == 1:
-                    # Mimic download_with_resume returning an existing corrupt
-                    # complete filename without rewriting it.
-                    return destination
-                with tarfile.open(destination, "w:gz"):
-                    pass
                 return destination
 
             with patch("cbir.data.revisitop_prepare.download_with_resume", fake_download):
-                _download_archive_with_repair(
+                _download_archive(
                     "https://example.invalid/archive.tgz",
                     archive_path,
-                    repair=True,
                 )
-            self.assertEqual(calls, 2)
-            with tarfile.open(archive_path, "r:gz"):
-                pass
+            self.assertEqual(calls, 1)
+            self.assertEqual(archive_path.read_bytes(), b"not-a-tar-file")
+
+    def test_fast_staging_skips_all_jpeg_decode_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source" / "roxford5k"
+            _write_toy_roxford(source)
+            output = root / "output"
+            with patch(
+                "cbir.data.revisitop_prepare._verify_jpeg",
+                side_effect=AssertionError("JPEG decoding should be disabled"),
+            ):
+                report = prepare_revisitop_datasets(
+                    output,
+                    datasets=("roxford5k",),
+                    source_root=root / "source",
+                    mode="stage",
+                    verify_images=False,
+                    enforce_official_counts=False,
+                )
+            self.assertEqual(report["datasets"]["roxford5k"]["status"], "prepared")
 
     def test_repair_replaces_corrupt_owned_annotation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
