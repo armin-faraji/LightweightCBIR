@@ -48,9 +48,10 @@ The intended order is:
    performs the pooling-temperature pilot, and builds/resumes the feature cache.
 3. `03_layer_set_selection.ipynb` restores the completed cache, runs fixed
    256-D SfM-only layer-set and representation ablations, and records a
-   manually selected layer set.
+   manually selected fusion configuration and layer set.
 4. `04_descriptor_dimension_selection.ipynb` compares descriptor dimensions
-   for that selected layer set and writes the final-model lock file.
+   for the selected CLS-concatenation configuration at 64-D, 128-D, 256-D,
+   and 384-D, then writes the final-model lock file.
 5. `05_final_runs_and_revisitop.ipynb` restores that final lock, stages
    RevisitOP, and performs the held-out evaluation.
 
@@ -95,8 +96,9 @@ DINOv2 revision; retain that value for comparable cache and training artifacts.
 
 Notebook 03 is intentionally fixed at 256-D, so layer-set comparisons do not
 mix descriptor capacity with layer selection. Notebook 04 performs the
-128-D-versus-256-D compactness comparison after the student manually selects a
-layer set. Both notebooks reuse the completed frozen feature cache.
+64-D/128-D/256-D/384-D comparison after the student manually selects the
+CLS-concatenation method and layer set. Both notebooks reuse the completed
+frozen feature cache.
 
 The three global-local weighting variants are:
 
