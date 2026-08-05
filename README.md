@@ -52,8 +52,9 @@ The intended order is:
 4. `04_descriptor_dimension_selection.ipynb` compares descriptor dimensions
    for the selected CLS-concatenation configuration at 64-D, 128-D, 256-D,
    and 384-D, then writes the final-model lock file.
-5. `05_final_runs_and_revisitop.ipynb` restores that final lock, stages
-   RevisitOP, and performs the held-out evaluation.
+5. `05_final_runs_and_revisitop.ipynb` restores that selection lock, retrains
+   the locked model on the merged SfM train/validation splits for its locked
+   epoch count, then stages RevisitOP and performs the held-out evaluation.
 
 Each active cloud-stage notebook (02–05) writes report-ready artifacts under
 `outputs/<notebook-number>/<run-id>/`, including figures, metrics, configuration,
@@ -141,7 +142,7 @@ python scripts/prepare_revisitop.py \
   --mode auto \
   --publish-root /content/drive/MyDrive/lightweight-cbir/datasets/revisitop \
   --repair
-python scripts/evaluate_revisitop.py --config configs/colab.yaml --checkpoint <locked.pt> --revisit-root <root> --dataset roxford5k
+python scripts/evaluate_revisitop.py --config configs/colab.yaml --checkpoint <final_full_sfm.pt> --revisit-root <root> --dataset roxford5k
 ```
 
 ## Tests

@@ -164,6 +164,59 @@ class TrainingTests(unittest.TestCase):
             self.assertEqual(checkpoint["fusion_config"]["head_kind"], "cls_concat")
             self.assertIsNone(checkpoint["fusion_config"]["gate_mode"])
 
+    def test_final_checkpoint_uses_the_last_requested_epoch(self) -> None:
+        fusion_config = FusionConfig(token_dim=4, layer_indices=(0, 1), output_dim=3)
+        training_config = TrainingConfig(
+            batch_size=2,
+            epochs=3,
+            early_stopping_patience=1,
+            device="cpu",
+        )
+        reader = SimpleNamespace(
+            manifest=SimpleNamespace(
+                fingerprint="cache-fingerprint",
+                extraction_config={"backbone": "tiny"},
+            )
+        )
+        pairs = (
+            PairRecord("q0", "p0", 0, "train"),
+            PairRecord("q1", "p1", 1, "train"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            trainer = HeadTrainer(
+                head=MultiLevelGlobalLocalFusion.from_config(fusion_config),
+                reader=reader,  # type: ignore[arg-type]
+                train_pairs=pairs,
+                fusion_config=fusion_config,
+                training_config=training_config,
+                output_dir=Path(temporary),
+            )
+            metrics = iter(
+                {
+                    "loss": loss,
+                    "entropy_penalty_scale": 0.0,
+                    "learning_rate": 1e-3,
+                }
+                for loss in (1.0, 2.0)
+            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                with patch.object(
+                    trainer,
+                    "_train_epoch",
+                    side_effect=lambda _loader: next(metrics),
+                ):
+                    history = trainer.fit(
+                        max_epochs=2,
+                        enable_early_stopping=False,
+                    )
+            final_checkpoint = trainer.save_final_checkpoint(history)
+            payload = torch.load(final_checkpoint, map_location="cpu", weights_only=False)
+
+            self.assertEqual(len(history.epochs), 2)
+            self.assertEqual(payload["epoch"], 1)
+            self.assertEqual(payload["checkpoint_kind"], "final")
+
 
 if __name__ == "__main__":
     unittest.main()

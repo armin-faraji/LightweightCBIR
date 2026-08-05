@@ -244,7 +244,22 @@ class HeadTrainer:
             T_max=training_config.epochs,
         )
 
-    def fit(self) -> TrainingHistory:
+    def fit(
+        self,
+        *,
+        max_epochs: int | None = None,
+        enable_early_stopping: bool = True,
+    ) -> TrainingHistory:
+        """Train for at most ``max_epochs`` while retaining the configured schedule.
+
+        A full-data final fit can stop at a validation-selected epoch without
+        changing the scheduler's original ``T_max`` or consulting a test set.
+        """
+        epochs = self.training_config.epochs if max_epochs is None else max_epochs
+        if not 1 <= epochs <= self.training_config.epochs:
+            raise ValueError(
+                "max_epochs must be between one and training_config.epochs"
+            )
         seed_everything(self.training_config.seed)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         history = TrainingHistory()
@@ -261,7 +276,7 @@ class HeadTrainer:
             local_kind=self.fusion_config.local_kind,
         )
 
-        for epoch in range(self.training_config.epochs):
+        for epoch in range(epochs):
             sampler.set_epoch(epoch)
             loader = DataLoader(
                 dataset,
@@ -295,9 +310,24 @@ class HeadTrainer:
             else:
                 stale_epochs += 1
             self.scheduler.step()
-            if stale_epochs >= self.training_config.early_stopping_patience:
+            if (
+                enable_early_stopping
+                and stale_epochs >= self.training_config.early_stopping_patience
+            ):
                 break
         return history
+
+    def save_final_checkpoint(self, history: TrainingHistory) -> Path:
+        """Save the last fitted epoch as a distinct final-training checkpoint."""
+        if not history.epochs:
+            raise ValueError("cannot save a final checkpoint before training")
+        final_epoch = int(history.epochs[-1]["epoch"])
+        return self._save_checkpoint(
+            final_epoch,
+            history,
+            filename="final.pt",
+            checkpoint_kind="final",
+        )
 
     def _train_epoch(self, loader: DataLoader[dict[str, Any]]) -> dict[str, float]:
         self.head.train()
@@ -370,10 +400,18 @@ class HeadTrainer:
             device=self.device,
         )
 
-    def _save_checkpoint(self, epoch: int, history: TrainingHistory) -> Path:
-        path = self.output_dir / "best.pt"
+    def _save_checkpoint(
+        self,
+        epoch: int,
+        history: TrainingHistory,
+        *,
+        filename: str = "best.pt",
+        checkpoint_kind: str = "best",
+    ) -> Path:
+        path = self.output_dir / filename
         payload = {
             "epoch": epoch,
+            "checkpoint_kind": checkpoint_kind,
             "cache_fingerprint": self.reader.manifest.fingerprint,
             "extraction_config": dict(self.reader.manifest.extraction_config),
             "model_state_dict": self.head.state_dict(),
