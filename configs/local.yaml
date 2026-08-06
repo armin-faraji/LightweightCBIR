@@ -28,7 +28,7 @@ fusion:
 
 training:
   seed: 42
-  batch_size: 256
+  batch_size: 512
   epochs: 30
   learning_rate: 0.001
   weight_decay: 0.0001
