@@ -1,276 +1,105 @@
 from __future__ import annotations
 
 import pickle
-import tempfile
 import tarfile
+import tempfile
 import unittest
-import os
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
-from PIL import Image
-
-from cbir.data.revisitop import RevisitOPDataset
 from cbir.data.revisitop_prepare import (
     _extract_expected_images_from_archive,
-    _download_annotation_with_repair,
-    _download_archive,
     prepare_revisitop_datasets,
-    publish_revisitop_datasets,
     validate_revisitop_dataset,
 )
 
 
 class RevisitOPPreparationTests(unittest.TestCase):
-    def test_loads_official_style_numeric_ground_truth_indices(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            annotation_path = Path(temporary) / "gnd_roxford5k.pkl"
-            raw = {
-                "imlist": ["building_a", "building_b", "building_c"],
-                "qimlist": ["building_a"],
-                "gnd": [
-                    {
-                        "bbx": [0, 0, 4, 4],
-                        "easy": [1],
-                        "hard": [2],
-                        "junk": [0],
-                    }
-                ],
-            }
-            with annotation_path.open("wb") as handle:
-                pickle.dump(raw, handle)
-
-            dataset = RevisitOPDataset.from_ground_truth_pickle(
-                name="roxford5k",
-                ground_truth_path=annotation_path,
-                image_root=Path(temporary) / "jpg",
-            )
-
-            ground_truth = dataset.ground_truth["building_a"]
-            self.assertEqual(ground_truth.easy, frozenset({"building_b"}))
-            self.assertEqual(ground_truth.hard, frozenset({"building_c"}))
-            self.assertEqual(ground_truth.junk, frozenset({"building_a"}))
-
-    def test_default_validation_rejects_nonofficial_counts(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            source = Path(temporary) / "roxford5k"
-            _write_toy_roxford(source)
-            strict = validate_revisitop_dataset(source, "roxford5k")
-            self.assertFalse(strict["valid"])
-            self.assertTrue(any("official count mismatch" in error for error in strict["errors"]))
-            relaxed = validate_revisitop_dataset(
-                source,
-                "roxford5k",
-                enforce_official_counts=False,
-            )
-            self.assertTrue(relaxed["valid"], relaxed["errors"])
-
-    def test_stages_existing_dataset_in_evaluator_layout(self) -> None:
+    def test_uses_local_archive_and_checks_filenames_without_decoding(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            source = root / "drive" / "datasets" / "roxford5k"
-            _write_toy_roxford(source)
+            archives = root / "archives"
+            archives.mkdir()
+            _write_archive(archives / "oxbuild_images-v1.tgz", {"a.jpg": b"not-a-jpeg", "b.jpg": b"also-not-a-jpeg"})
 
-            output_root = root / "content" / "revisitop"
-            report = prepare_revisitop_datasets(
-                output_root,
-                datasets=("roxford5k",),
-                source_root=root / "drive",
-                mode="stage",
-                enforce_official_counts=False,
-            )
-            self.assertEqual(report["datasets"]["roxford5k"]["status"], "prepared")
-            target = output_root / "roxford5k"
-            validation = validate_revisitop_dataset(
-                target,
-                "roxford5k",
-                enforce_official_counts=False,
-            )
-            self.assertTrue(validation["valid"], validation["errors"])
-            self.assertEqual(validation["database_image_count"], 2)
-            self.assertEqual(validation["query_count"], 1)
-            self.assertFalse((output_root / ".roxford5k.staging").exists())
+            calls: list[Path] = []
 
-            # It is safe to call from a fresh notebook runtime when a full local
-            # staging already exists.
-            repeat = prepare_revisitop_datasets(
-                output_root,
-                datasets=("roxford5k",),
-                source_root=root / "drive",
-                mode="stage",
-                enforce_official_counts=False,
-            )
-            self.assertEqual(repeat["datasets"]["roxford5k"]["status"], "already_prepared")
+            def fake_download(_: str, destination: Path) -> Path:
+                calls.append(destination)
+                _write_annotation(destination)
+                return destination
 
-    def test_refuses_to_replace_invalid_visible_target(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            source = root / "source" / "roxford5k"
-            _write_toy_roxford(source)
-            invalid_target = root / "output" / "roxford5k"
-            invalid_target.mkdir(parents=True)
-            with self.assertRaises(RuntimeError):
-                prepare_revisitop_datasets(
-                    root / "output",
+            with patch("cbir.data.revisitop_prepare.download_with_resume", fake_download):
+                report = prepare_revisitop_datasets(
+                    root / "prepared",
+                    archives_root=archives,
                     datasets=("roxford5k",),
-                    source_root=root / "source",
-                    mode="stage",
                     enforce_official_counts=False,
                 )
-
-    def test_archive_member_path_cannot_escape_staging_root(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            archive_path = root / "images.tgz"
-            with tarfile.open(archive_path, "w:gz") as archive:
-                _add_tar_member(archive, "../../escape.jpg", b"unsafe")
-                _add_tar_member(archive, "nested/expected.jpg", b"expected")
-            output = root / "jpg"
-            _extract_expected_images_from_archive(
-                archive_path,
-                output,
-                ["expected"],
-                verify_existing=False,
-            )
-            self.assertEqual((output / "expected.jpg").read_bytes(), b"expected")
-            self.assertFalse((root / "escape.jpg").exists())
-
-    def test_publish_to_persistent_root_uses_same_validated_stage_path(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            local = root / "content" / "revisitop" / "roxford5k"
-            _write_toy_roxford(local)
-            persistent = root / "drive" / "datasets" / "revisitop"
-            report = publish_revisitop_datasets(
-                local.parent,
-                persistent,
-                datasets=("roxford5k",),
-                enforce_official_counts=False,
-            )
+            self.assertEqual(len(calls), 1)  # Annotation only; archive was local.
             self.assertEqual(report["datasets"]["roxford5k"]["status"], "prepared")
             self.assertTrue(
                 validate_revisitop_dataset(
-                    persistent / "roxford5k",
+                    root / "prepared" / "roxford5k",
                     "roxford5k",
                     enforce_official_counts=False,
                 )["valid"]
             )
 
-    def test_refuses_symlinked_hidden_staging_directory(self) -> None:
+    def test_downloads_only_a_missing_archive(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            source = root / "source" / "roxford5k"
-            _write_toy_roxford(source)
-            output = root / "output"
-            output.mkdir()
-            outside = root / "outside"
-            outside.mkdir()
-            os.symlink(outside, output / ".roxford5k.staging", target_is_directory=True)
-            with self.assertRaises(RuntimeError):
+            archives = root / "archives"
+            calls: list[Path] = []
+
+            def fake_download(url: str, destination: Path) -> Path:
+                calls.append(destination)
+                if destination.suffix == ".pkl":
+                    _write_annotation(destination)
+                else:
+                    _write_archive(destination, {"a.jpg": b"a", "b.jpg": b"b"})
+                return destination
+
+            with patch("cbir.data.revisitop_prepare.download_with_resume", fake_download):
                 prepare_revisitop_datasets(
-                    output,
+                    root / "prepared",
+                    archives_root=archives,
                     datasets=("roxford5k",),
-                    source_root=root / "source",
-                    mode="stage",
                     enforce_official_counts=False,
                 )
+            self.assertEqual(len(calls), 2)
+            self.assertTrue((archives / "oxbuild_images-v1.tgz").is_file())
 
-    def test_archive_download_defers_full_validation_to_extraction(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            archive_path = Path(temporary) / "download.tgz"
-            archive_path.write_bytes(b"not-a-tar-file")
-            calls = 0
-
-            def fake_download(url: str, destination: Path) -> Path:
-                nonlocal calls
-                calls += 1
-                return destination
-
-            with patch("cbir.data.revisitop_prepare.download_with_resume", fake_download):
-                _download_archive(
-                    "https://example.invalid/archive.tgz",
-                    archive_path,
-                )
-            self.assertEqual(calls, 1)
-            self.assertEqual(archive_path.read_bytes(), b"not-a-tar-file")
-
-    def test_fast_staging_skips_all_jpeg_decode_checks(self) -> None:
+    def test_archive_member_path_cannot_escape_destination(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            source = root / "source" / "roxford5k"
-            _write_toy_roxford(source)
-            output = root / "output"
-            with patch(
-                "cbir.data.revisitop_prepare._verify_jpeg",
-                side_effect=AssertionError("JPEG decoding should be disabled"),
-            ):
-                report = prepare_revisitop_datasets(
-                    output,
-                    datasets=("roxford5k",),
-                    source_root=root / "source",
-                    mode="stage",
-                    verify_images=False,
-                    enforce_official_counts=False,
-                )
-            self.assertEqual(report["datasets"]["roxford5k"]["status"], "prepared")
-
-    def test_repair_replaces_corrupt_owned_annotation(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            annotation_path = Path(temporary) / "gnd_roxford5k.pkl"
-            annotation_path.write_bytes(b"not-a-pickle")
-            calls = 0
-
-            def fake_download(url: str, destination: Path) -> Path:
-                nonlocal calls
-                calls += 1
-                if calls == 1:
-                    return destination
-                raw = {
-                    "imlist": ["a"],
-                    "qimlist": ["a"],
-                    "gnd": [{"bbx": [0, 0, 1, 1], "easy": ["a"], "hard": [], "junk": []}],
-                }
-                with destination.open("wb") as handle:
-                    pickle.dump(raw, handle)
-                return destination
-
-            with patch("cbir.data.revisitop_prepare.download_with_resume", fake_download):
-                dataset = _download_annotation_with_repair(
-                    "https://example.invalid/gnd.pkl",
-                    annotation_path,
-                    "roxford5k",
-                    repair=True,
-                )
-            self.assertEqual(calls, 2)
-            self.assertEqual(dataset.database_ids, ("a",))
+            archive = root / "images.tgz"
+            _write_archive(archive, {"../../escape.jpg": b"unsafe", "nested/expected.jpg": b"expected"})
+            output = root / "jpg"
+            _extract_expected_images_from_archive(archive, output, ("expected",))
+            self.assertEqual((output / "expected.jpg").read_bytes(), b"expected")
+            self.assertFalse((root / "escape.jpg").exists())
 
 
-def _write_toy_roxford(dataset_dir: Path) -> None:
-    image_root = dataset_dir / "jpg"
-    image_root.mkdir(parents=True)
+def _write_annotation(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     raw = {
-        "imlist": ["building_a", "building_b"],
-        "qimlist": ["building_a"],
-        "gnd": [
-            {
-                "bbx": [0, 0, 4, 4],
-                "easy": ["building_a"],
-                "hard": ["building_b"],
-                "junk": [],
-            }
-        ],
+        "imlist": ["a", "b"],
+        "qimlist": ["a"],
+        "gnd": [{"bbx": [0, 0, 1, 1], "easy": [0], "hard": [1], "junk": []}],
     }
-    with (dataset_dir / "gnd_roxford5k.pkl").open("wb") as handle:
+    with path.open("wb") as handle:
         pickle.dump(raw, handle)
-    Image.new("RGB", (8, 8), color=(200, 10, 20)).save(image_root / "building_a.jpg")
-    Image.new("RGB", (8, 8), color=(10, 200, 20)).save(image_root / "building_b.jpg")
 
 
-def _add_tar_member(archive: tarfile.TarFile, name: str, payload: bytes) -> None:
-    member = tarfile.TarInfo(name)
-    member.size = len(payload)
-    archive.addfile(member, BytesIO(payload))
+def _write_archive(path: Path, payloads: dict[str, bytes]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(path, "w:gz") as archive:
+        for name, payload in payloads.items():
+            member = tarfile.TarInfo(name)
+            member.size = len(payload)
+            archive.addfile(member, BytesIO(payload))
 
 
 if __name__ == "__main__":

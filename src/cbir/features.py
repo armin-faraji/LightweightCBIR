@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Iterable, Sequence
 
 import torch
 import torch.nn.functional as functional
@@ -211,13 +211,14 @@ class FeatureExtractionRunner:
 
     def pilot_pooling_temperatures(
         self,
-        images: Sequence[tuple[str, Image.Image]],
+        images: Iterable[tuple[str, Image.Image]],
         *,
         temperatures: Sequence[float],
         layer_indices: Sequence[int] | None = None,
         backbone_batch_size: int = 32,
+        image_chunk_size: int = 128,
     ) -> PoolingTemperaturePilot:
-        """Compute pooling diagnostics for candidate temperatures without recaching."""
+        """Compute pooling diagnostics in bounded decoded-image chunks."""
         if not temperatures:
             raise ValueError("at least one candidate pooling temperature is required")
         candidate_temperatures = tuple(float(value) for value in temperatures)
@@ -225,50 +226,66 @@ class FeatureExtractionRunner:
             raise ValueError("candidate pooling temperatures must be positive")
         if len(set(candidate_temperatures)) != len(candidate_temperatures):
             raise ValueError("candidate pooling temperatures must be unique")
-        if not images:
-            raise ValueError("cannot pilot an empty image sequence")
-        if len({image_id for image_id, _ in images}) != len(images):
-            raise ValueError("image IDs must be unique within a pooling pilot")
+        if backbone_batch_size <= 0 or image_chunk_size <= 0:
+            raise ValueError("backbone_batch_size and image_chunk_size must be positive")
         requested = tuple(
             self.pooling.all_layer_indices if layer_indices is None else layer_indices
         )
-        buckets = preprocess_many_by_shape(list(images), self.preprocess)
         by_temperature: dict[
             float,
             dict[str, tuple[torch.Tensor, torch.Tensor]],
         ] = {temperature: {} for temperature in candidate_temperatures}
-        for _, (bucket_batch, bucket_records) in buckets.items():
-            for start in range(0, bucket_batch.shape[0], backbone_batch_size):
-                batch = bucket_batch[start : start + backbone_batch_size]
-                records = bucket_records[start : start + backbone_batch_size]
-                tokens = self.extractor.extract_intermediate_tokens(batch, requested)
-                means = torch.stack([mean_patch_pool(token.patches) for token in tokens], dim=1)
-                for temperature in candidate_temperatures:
-                    entropy = []
-                    guided = []
-                    for token in tokens:
-                        local, layer_entropy, _ = cls_guided_pool(
-                            token.cls,
-                            token.patches,
-                            tau_p=temperature,
+        image_ids: list[str] = []
+        seen_ids: set[str] = set()
+
+        def process_chunk(chunk: list[tuple[str, Image.Image]]) -> None:
+            buckets = preprocess_many_by_shape(chunk, self.preprocess)
+            for _, (bucket_batch, bucket_records) in buckets.items():
+                for start in range(0, bucket_batch.shape[0], backbone_batch_size):
+                    batch = bucket_batch[start : start + backbone_batch_size]
+                    records = bucket_records[start : start + backbone_batch_size]
+                    tokens = self.extractor.extract_intermediate_tokens(batch, requested)
+                    means = torch.stack([mean_patch_pool(token.patches) for token in tokens], dim=1)
+                    for temperature in candidate_temperatures:
+                        entropy = []
+                        guided = []
+                        for token in tokens:
+                            local, layer_entropy, _ = cls_guided_pool(
+                                token.cls,
+                                token.patches,
+                                tau_p=temperature,
+                                eps=self.pooling.eps,
+                            )
+                            guided.append(local)
+                            entropy.append(layer_entropy)
+                        guided_tensor = torch.stack(guided, dim=1)
+                        entropy_tensor = torch.stack(entropy, dim=1)
+                        similarity = functional.cosine_similarity(
+                            guided_tensor,
+                            means,
+                            dim=-1,
                             eps=self.pooling.eps,
                         )
-                        guided.append(local)
-                        entropy.append(layer_entropy)
-                    guided_tensor = torch.stack(guided, dim=1)
-                    entropy_tensor = torch.stack(entropy, dim=1)
-                    similarity = functional.cosine_similarity(
-                        guided_tensor,
-                        means,
-                        dim=-1,
-                        eps=self.pooling.eps,
-                    )
-                    for position, record in enumerate(records):
-                        by_temperature[temperature][record.image_id] = (
-                            entropy_tensor[position].cpu(),
-                            similarity[position].cpu(),
-                        )
-        image_ids = tuple(image_id for image_id, _ in images)
+                        for position, record in enumerate(records):
+                            by_temperature[temperature][record.image_id] = (
+                                entropy_tensor[position].cpu(),
+                                similarity[position].cpu(),
+                            )
+
+        chunk: list[tuple[str, Image.Image]] = []
+        for image_id, image in images:
+            if image_id in seen_ids:
+                raise ValueError("image IDs must be unique within a pooling pilot")
+            seen_ids.add(image_id)
+            image_ids.append(image_id)
+            chunk.append((image_id, image))
+            if len(chunk) == image_chunk_size:
+                process_chunk(chunk)
+                chunk = []
+        if chunk:
+            process_chunk(chunk)
+        if not image_ids:
+            raise ValueError("cannot pilot an empty image sequence")
         entropy_by_temperature = {
             temperature: torch.stack(
                 [by_temperature[temperature][image_id][0] for image_id in image_ids]
@@ -282,8 +299,66 @@ class FeatureExtractionRunner:
             for temperature in candidate_temperatures
         }
         return PoolingTemperaturePilot(
-            image_ids=image_ids,
+            image_ids=tuple(image_ids),
             layer_indices=requested,
             entropy_by_temperature=entropy_by_temperature,
             guided_mean_cosine_by_temperature=guided_mean_cosine_by_temperature,
         )
+
+
+def concat_all_layer_features(batches: Sequence[AllLayerFeatures]) -> AllLayerFeatures:
+    """Join sequential extraction batches without retaining decoded images."""
+    if not batches:
+        raise ValueError("at least one feature batch is required")
+    layer_indices = batches[0].layer_indices
+    if any(batch.layer_indices != layer_indices for batch in batches):
+        raise ValueError("feature batches use different layer indices")
+    image_ids = tuple(image_id for batch in batches for image_id in batch.image_ids)
+    if len(image_ids) != len(set(image_ids)):
+        raise ValueError("feature batches contain duplicate image IDs")
+    return AllLayerFeatures(
+        image_ids=image_ids,
+        cls=torch.cat([batch.cls for batch in batches]),
+        mean_patch=torch.cat([batch.mean_patch for batch in batches]),
+        cls_guided_patch=torch.cat([batch.cls_guided_patch for batch in batches]),
+        pooling_entropy=torch.cat([batch.pooling_entropy for batch in batches]),
+        layer_indices=layer_indices,
+        preprocess_records=tuple(
+            record for batch in batches for record in batch.preprocess_records
+        ),
+    )
+
+
+def extract_image_stream(
+    runner: FeatureExtractionRunner,
+    images: Iterable[tuple[str, Image.Image]],
+    *,
+    layer_indices: Sequence[int],
+    backbone_batch_size: int,
+    image_chunk_size: int = 256,
+) -> AllLayerFeatures:
+    """Extract a sequence in bounded decoded-image chunks."""
+    if image_chunk_size <= 0:
+        raise ValueError("image_chunk_size must be positive")
+    batches: list[AllLayerFeatures] = []
+    chunk: list[tuple[str, Image.Image]] = []
+    for item in images:
+        chunk.append(item)
+        if len(chunk) == image_chunk_size:
+            batches.append(
+                runner.extract_images(
+                    chunk,
+                    layer_indices=layer_indices,
+                    backbone_batch_size=backbone_batch_size,
+                )
+            )
+            chunk = []
+    if chunk:
+        batches.append(
+            runner.extract_images(
+                chunk,
+                layer_indices=layer_indices,
+                backbone_batch_size=backbone_batch_size,
+            )
+        )
+    return concat_all_layer_features(batches)

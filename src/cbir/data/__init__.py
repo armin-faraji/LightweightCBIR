@@ -5,16 +5,14 @@ from .revisitop_prepare import (
     REVISITOP_DATASETS,
     OFFICIAL_REVISITOP_COUNTS,
     RevisitOPUrls,
-    publish_revisitop_datasets,
     prepare_revisitop_datasets,
     validate_revisitop_dataset,
 )
-from .download import SfmUrls, download_with_resume, extract_selected_sfm_images
+from .download import SfmUrls, download_with_resume
 from .sfm import (
     ImageRecord,
     PairRecord,
     Sfm30kMetadata,
-    SfmImageDirectoryReader,
     SfmMatImageReader,
     ValidationCase,
 )
@@ -33,13 +31,10 @@ __all__ = [
     "RevisitOPUrls",
     "SfmUrls",
     "Sfm30kMetadata",
-    "SfmImageDirectoryReader",
     "SfmMatImageReader",
     "ValidationCase",
     "download_with_resume",
-    "extract_selected_sfm_images",
     "preprocess_retrieval_image",
-    "publish_revisitop_datasets",
     "prepare_revisitop_datasets",
     "validate_revisitop_dataset",
 ]

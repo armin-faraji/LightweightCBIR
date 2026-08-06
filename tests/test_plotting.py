@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+import matplotlib.pyplot as plt
+
 from cbir.plotting import HorizontalReference, SeriesData, plot_series
 
 
@@ -22,8 +24,6 @@ class PlottingTests(unittest.TestCase):
             self.assertIsNotNone(legend)
             self.assertEqual(legend.get_title().get_text(), "Pooling temperature (τₚ)")
         finally:
-            import matplotlib.pyplot as plt
-
             plt.close(figure)
 
     def test_default_figure_size_is_backward_compatible(self) -> None:
@@ -31,8 +31,6 @@ class PlottingTests(unittest.TestCase):
         try:
             self.assertEqual(tuple(figure.get_size_inches()), (7.0, 4.5))
         finally:
-            import matplotlib.pyplot as plt
-
             plt.close(figure)
 
     def test_custom_figure_size_is_used_for_new_figure(self) -> None:
@@ -40,8 +38,6 @@ class PlottingTests(unittest.TestCase):
         try:
             self.assertEqual(tuple(figure.get_size_inches()), (12.0, 6.0))
         finally:
-            import matplotlib.pyplot as plt
-
             plt.close(figure)
 
     def test_invalid_figure_size_is_rejected(self) -> None:
@@ -51,8 +47,6 @@ class PlottingTests(unittest.TestCase):
                     plot_series(self._series(), fig_size=value)  # type: ignore[arg-type]
 
     def test_figure_size_cannot_be_used_with_existing_axis(self) -> None:
-        import matplotlib.pyplot as plt
-
         figure, axis = plt.subplots()
         try:
             with self.assertRaisesRegex(ValueError, "together with ax"):
@@ -74,8 +68,6 @@ class PlottingTests(unittest.TestCase):
             labels = [text.get_text() for text in legend.get_texts()]
             self.assertIn("Final CLS — 384-D (frozen)", labels)
         finally:
-            import matplotlib.pyplot as plt
-
             plt.close(figure)
 
 

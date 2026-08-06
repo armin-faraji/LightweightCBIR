@@ -7,6 +7,7 @@ from math import isfinite
 from pathlib import Path
 from typing import Mapping, Sequence
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 
@@ -88,8 +89,6 @@ def plot_series(
     if ax is not None and fig_size is not None:
         raise ValueError("fig_size cannot be used together with ax")
     resolved_fig_size = _validate_fig_size(fig_size)
-    import matplotlib.pyplot as plt
-
     if ax is None:
         figure, axis = plt.subplots(figsize=resolved_fig_size)
     else:

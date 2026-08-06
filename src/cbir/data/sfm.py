@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any, Iterable, Literal, Mapping, Sequence
 
 import numpy as np
+import h5py
 from PIL import Image
+from scipy.io import loadmat
 
 
 @dataclass(frozen=True)
@@ -35,13 +37,6 @@ class ValidationCase:
     positive_id: str
     cluster_id: int
     ignored_ids: frozenset[str]
-
-
-def cid_to_relative_path(cid: str) -> Path:
-    """Map official retrieval-SfM CID to its original archive path."""
-    if len(cid) < 6:
-        raise ValueError(f"CID must contain at least six characters, got {cid!r}")
-    return Path(cid[-2:]) / cid[-4:-2] / cid[-6:-4] / cid
 
 
 def canonicalize_train_pairs(pairs: Iterable[PairRecord]) -> tuple[PairRecord, ...]:
@@ -293,10 +288,6 @@ def _validate_official_split_payload(payload: Mapping[str, Any], split: str) -> 
 
 
 def _load_30k_selection(path: Path) -> dict[str, int]:
-    try:
-        from scipy.io import loadmat
-    except ImportError as error:
-        raise ImportError("scipy is required to load 30k MATLAB selection metadata") from error
     raw = loadmat(path)
     if "cids" not in raw or "cluster" not in raw:
         raise ValueError("30k selection MAT must contain cids and cluster")
@@ -324,25 +315,6 @@ def _unwrap_matlab_string(value: Any) -> str:
     raise ValueError(f"cannot decode MATLAB CID value with shape {array.shape}")
 
 
-class SfmImageDirectoryReader:
-    """Read selected SfM images from the official original-image directory layout."""
-
-    def __init__(self, image_root: Path) -> None:
-        self.image_root = Path(image_root)
-
-    def path_for(self, image_id: str) -> Path:
-        path = self.image_root / cid_to_relative_path(image_id)
-        if not path.is_file():
-            raise FileNotFoundError(f"missing SfM image for CID {image_id}: {path}")
-        return path
-
-    def read(self, image_id: str) -> Image.Image:
-        with self.path_for(image_id).open("rb") as handle:
-            image = Image.open(handle)
-            image.load()
-        return image
-
-
 class SfmMatImageReader:
     """Lazy reader for the large v7.3 MAT image database, using HDF5 references."""
 
@@ -353,13 +325,6 @@ class SfmMatImageReader:
     )
 
     def __init__(self, mat_path: Path) -> None:
-        try:
-            import h5py
-        except ImportError as error:
-            raise ImportError(
-                "h5py is required for streaming retrieval-SfM-30k.mat"
-            ) from error
-        self._h5py = h5py
         self.mat_path = Path(mat_path)
         self._file = h5py.File(self.mat_path, "r")
         self._datasets = {
@@ -387,7 +352,7 @@ class SfmMatImageReader:
         if index < 0 or index >= len(references):
             raise IndexError(f"{split} image index {index} out of range")
         reference = references[index]
-        if not isinstance(reference, self._h5py.Reference):
+        if not isinstance(reference, h5py.Reference):
             raise TypeError(
                 "expected a MATLAB v7.3 cell reference. This file layout is not "
                 "the supported streaming image database format."

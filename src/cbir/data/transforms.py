@@ -93,7 +93,7 @@ class ResizeLongestSideToPatchGrid:
             image,
             [resized_h, resized_w],
             interpolation=InterpolationMode.BICUBIC,
-            antialias=self.config.antialias,
+            antialias=True,
         )
         image = _center_crop_to_hw(image, final_hw)
         return image, resized_hw, final_hw, extreme
@@ -106,8 +106,7 @@ def preprocess_retrieval_image(
     config: PreprocessConfig,
 ) -> tuple[torch.Tensor, PreprocessRecord]:
     """Convert one stored-pixel image to normalized CHW tensor and audit record."""
-    if config.rgb_only:
-        image = image.convert("RGB")
+    image = image.convert("RGB")
     original_hw = (image.height, image.width)
     transformed, resized_hw, final_hw, extreme = ResizeLongestSideToPatchGrid(config)(image)
     tensor = tvf.to_tensor(transformed)

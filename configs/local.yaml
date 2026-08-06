@@ -1,0 +1,40 @@
+# Shared local defaults. Notebooks declare their experiment-specific settings.
+backbone:
+  revision: 7764ea0f912e53c92e82eb78a2a1631e92725fc8
+  device: cuda
+  use_amp: true
+
+preprocess:
+  long_side: 224
+
+pooling:
+  temperature: 0.025
+
+cache:
+  root: data/cache
+  shard_size: 1000
+
+sfm:
+  metadata_path: data/raw/sfm30k/retrieval-SfM-120k.pkl
+  names_clusters_path: data/raw/sfm30k/retrieval-SfM-30k-imagenames-clusterids.mat
+  image_mat_path: data/raw/sfm30k/retrieval-SfM-30k.mat
+
+fusion:
+  # One-based transformer blocks: (8, 10, 12).
+  layer_indices: [7, 9, 11]
+  output_dim: 128
+  head_kind: cls_concat
+  gate_mode: null
+
+training:
+  seed: 42
+  batch_size: 256
+  epochs: 30
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  loss_temperature: 0.07
+  early_stopping_patience: 8
+  device: cuda
+
+evaluation:
+  query_block_size: 256

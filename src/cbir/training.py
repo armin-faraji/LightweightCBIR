@@ -6,9 +6,9 @@ import os
 import random
 import tempfile
 from collections import defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator, Sequence
+from typing import Any, Iterator, Sequence
 
 import torch
 import torch.nn.functional as functional
@@ -16,10 +16,10 @@ from torch import nn
 from torch.utils.data import DataLoader, Dataset, Sampler
 
 from .cache import FeatureShardReader
-from .config import FusionConfig, TrainingConfig, config_to_dict
+from .config import FusionConfig, TrainingConfig, config_to_dict, fusion_config_from_dict
 from .data.sfm import PairRecord, ValidationCase
 from .evaluation import SfmRetrievalReport, descriptors_from_cache, evaluate_sfm_verified_pairs
-from .fusion import FusionDiagnostics
+from .fusion import FusionDiagnostics, build_descriptor_head
 from .utils import assert_finite, l2_normalize, seed_everything
 
 
@@ -201,13 +201,7 @@ class HeadTrainer:
         validation_cases: Sequence[ValidationCase] | None = None,
         validation_image_ids: Sequence[str] | None = None,
         output_dir: Path = Path("outputs/training"),
-        checkpoint_callback: Callable[[Path], None] | None = None,
     ) -> None:
-        if training_config.num_workers != 0:
-            raise ValueError(
-                "num_workers must be zero for the cache-reader collator. "
-                "Add worker-safe per-process cache readers before changing this."
-            )
         if tuple(fusion_config.layer_indices) != tuple(head.config.layer_indices):
             raise ValueError("head layers and fusion config layers differ")
         if fusion_config.local_kind not in {"cls_guided_patch", "mean_patch"}:
@@ -224,12 +218,6 @@ class HeadTrainer:
                 "validation_cases and validation_image_ids must be supplied together"
             )
         self.output_dir = Path(output_dir)
-        # A cloud notebook can use this hook to copy every newly improved
-        # checkpoint to persistent storage immediately.  The callback runs only
-        # after the local checkpoint has been atomically replaced and receives
-        # that completed file path.  Its exceptions intentionally stop training:
-        # silently claiming a Drive-backed best checkpoint would be unsafe.
-        self.checkpoint_callback = checkpoint_callback
         self.device = torch.device(training_config.device)
         if self.device.type == "cuda" and not torch.cuda.is_available():
             raise RuntimeError("training requests CUDA but CUDA is unavailable")
@@ -249,6 +237,7 @@ class HeadTrainer:
         *,
         max_epochs: int | None = None,
         enable_early_stopping: bool = True,
+        save_best_checkpoint: bool = True,
     ) -> TrainingHistory:
         """Train for at most ``max_epochs`` while retaining the configured schedule.
 
@@ -303,9 +292,8 @@ class HeadTrainer:
             if metric > history.best_metric:
                 history.best_metric = metric
                 history.best_epoch = epoch
-                history.best_checkpoint = self._save_checkpoint(epoch, history)
-                if self.checkpoint_callback is not None:
-                    self.checkpoint_callback(history.best_checkpoint)
+                if save_best_checkpoint:
+                    history.best_checkpoint = self._save_checkpoint(epoch, history)
                 stale_epochs = 0
             else:
                 stale_epochs += 1
@@ -429,6 +417,21 @@ class HeadTrainer:
             temporary.unlink(missing_ok=True)
             raise
         return path
+
+
+def load_descriptor_head(
+    checkpoint_path: Path,
+    *,
+    device: torch.device | str = "cpu",
+) -> tuple[nn.Module, dict[str, Any]]:
+    """Load a locally saved descriptor head and its small checkpoint payload."""
+    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    if not isinstance(payload, dict) or "fusion_config" not in payload:
+        raise ValueError(f"invalid descriptor checkpoint: {checkpoint_path}")
+    fusion = fusion_config_from_dict(payload["fusion_config"])
+    head = build_descriptor_head(fusion)
+    head.load_state_dict(payload["model_state_dict"])
+    return head.to(device).eval(), payload
 
 
 def _shuffled(values: Sequence[int], rng: random.Random) -> list[int]:

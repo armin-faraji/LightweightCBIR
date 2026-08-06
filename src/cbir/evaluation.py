@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Literal, Mapping, Sequence
+from typing import Literal, Mapping, Sequence
 
 import numpy as np
 import torch
 from torch import nn
-from PIL import Image
 
 from .cache import FeatureShardReader
 from .data.revisitop import RevisitGroundTruth
 from .data.sfm import ValidationCase
-from .features import FeatureExtractionRunner
 from .utils import assert_finite, l2_normalize
 
 
@@ -81,6 +79,41 @@ def descriptors_from_cache(
     return l2_normalize(result)
 
 
+@torch.inference_mode()
+def descriptors_from_feature_tensors(
+    cls: torch.Tensor,
+    head: nn.Module,
+    *,
+    local: torch.Tensor | None = None,
+    entropy: torch.Tensor | None = None,
+    batch_size: int = 1024,
+    device: torch.device | str = "cpu",
+) -> torch.Tensor:
+    """Apply a descriptor head to an in-memory frozen-feature cache."""
+    if cls.ndim != 3 or not len(cls):
+        raise ValueError("cls must have shape [N, K, D] with N > 0")
+    if local is not None and local.shape != cls.shape:
+        raise ValueError("local features must match cls shape")
+    if entropy is not None and entropy.shape != cls.shape[:2]:
+        raise ValueError("entropy must have shape [N, K]")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    device = torch.device(device)
+    head = head.eval().to(device)
+    outputs: list[torch.Tensor] = []
+    for start in range(0, cls.shape[0], batch_size):
+        stop = start + batch_size
+        result = head(
+            cls[start:stop].to(device),
+            None if local is None else local[start:stop].to(device),
+            None if entropy is None else entropy[start:stop].to(device),
+        )
+        if not isinstance(result, torch.Tensor):
+            result = result[0]
+        outputs.append(result.cpu())
+    return l2_normalize(torch.cat(outputs, dim=0))
+
+
 def rank_exact(
     query_descriptors: torch.Tensor,
     database_descriptors: torch.Tensor,
@@ -140,38 +173,6 @@ def final_cls_descriptors_from_cache(
         local_kind="cls_guided_patch",
     )
     return l2_normalize(batch["cls"][:, 0])
-
-
-@torch.inference_mode()
-def descriptors_from_images(
-    runner: FeatureExtractionRunner,
-    head: nn.Module,
-    images: Sequence[tuple[str, Image.Image]],
-    *,
-    layer_indices: Sequence[int],
-    local_kind: str,
-    backbone_batch_size: int = 32,
-    device: torch.device | str = "cpu",
-) -> torch.Tensor:
-    """Extract descriptors from a modest image batch without a persistent cache."""
-    features = runner.extract_images(
-        images,
-        layer_indices=layer_indices,
-        backbone_batch_size=backbone_batch_size,
-    )
-    cls, local, entropy = features.select_layers(
-        layer_indices,
-        local_kind=local_kind,
-    )
-    head = head.eval().to(device)
-    result = head(
-        cls.to(device),
-        local.to(device),
-        entropy.to(device),
-    )
-    if not isinstance(result, torch.Tensor):
-        result = result[0]
-    return l2_normalize(result.detach().cpu())
 
 
 def evaluate_sfm_verified_pairs(

@@ -12,7 +12,12 @@ import torch
 from cbir.config import FusionConfig, TrainingConfig
 from cbir.data.sfm import PairRecord
 from cbir.fusion import MultiLevelGlobalLocalFusion, build_descriptor_head
-from cbir.training import ClusterUniquePairBatchSampler, HeadTrainer, symmetric_info_nce
+from cbir.training import (
+    ClusterUniquePairBatchSampler,
+    HeadTrainer,
+    load_descriptor_head,
+    symmetric_info_nce,
+)
 
 
 class TrainingTests(unittest.TestCase):
@@ -33,11 +38,13 @@ class TrainingTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(loss))
         self.assertGreaterEqual(float(loss), 0.0)
 
-    def test_checkpoint_callback_receives_every_newly_improved_checkpoint(self) -> None:
+    def test_best_checkpoint_tracks_improvement(self) -> None:
         fusion_config = FusionConfig(
             token_dim=4,
             layer_indices=(0, 1),
             output_dim=3,
+            head_kind="global_local",
+            gate_mode="dynamic",
         )
         training_config = TrainingConfig(
             batch_size=2,
@@ -46,9 +53,6 @@ class TrainingTests(unittest.TestCase):
             device="cpu",
         )
         head = MultiLevelGlobalLocalFusion.from_config(fusion_config)
-        # ``fit`` only needs a real cache reader inside the collator, which is
-        # bypassed here by the focused epoch-method patch below.  The genuine
-        # checkpoint writer still records the cache fingerprint.
         reader = SimpleNamespace(
             manifest=SimpleNamespace(
                 fingerprint="cache-fingerprint",
@@ -59,13 +63,6 @@ class TrainingTests(unittest.TestCase):
             PairRecord("q0", "p0", 0, "train"),
             PairRecord("q1", "p1", 1, "train"),
         )
-        callbacks: list[tuple[Path, int]] = []
-
-        def on_checkpoint(path: Path) -> None:
-            self.assertTrue(path.is_file())
-            payload = torch.load(path, map_location="cpu", weights_only=False)
-            callbacks.append((path, int(payload["epoch"])))
-
         with tempfile.TemporaryDirectory() as temporary:
             trainer = HeadTrainer(
                 head=head,
@@ -74,10 +71,7 @@ class TrainingTests(unittest.TestCase):
                 fusion_config=fusion_config,
                 training_config=training_config,
                 output_dir=Path(temporary),
-                checkpoint_callback=on_checkpoint,
             )
-            # Lower training loss means a higher checkpoint-selection metric
-            # when no validation set is configured.
             metrics = iter(
                 (
                     {"loss": 3.0, "entropy_penalty_scale": 0.1, "learning_rate": 1e-3},
@@ -85,9 +79,6 @@ class TrainingTests(unittest.TestCase):
                     {"loss": 2.5, "entropy_penalty_scale": 0.1, "learning_rate": 1e-3},
                 )
             )
-            # The focused epoch stub does not perform a real optimizer step,
-            # so suppress PyTorch's scheduler-order warning that is irrelevant
-            # to the callback contract under test.
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", UserWarning)
                 with patch.object(
@@ -97,10 +88,11 @@ class TrainingTests(unittest.TestCase):
                 ):
                     history = trainer.fit()
 
-            self.assertEqual([epoch for _, epoch in callbacks], [0, 1])
             self.assertEqual(history.best_epoch, 1)
             self.assertEqual(history.best_metric, -2.0)
             self.assertEqual(history.best_checkpoint, Path(temporary) / "best.pt")
+            payload = torch.load(history.best_checkpoint, map_location="cpu", weights_only=False)
+            self.assertEqual(payload["epoch"], 1)
 
     def test_cls_concat_head_uses_the_common_training_pipeline(self) -> None:
         """CLS-only ablations must not need a separate trainer or cache format."""
@@ -163,9 +155,18 @@ class TrainingTests(unittest.TestCase):
             checkpoint = torch.load(history.best_checkpoint, map_location="cpu", weights_only=False)
             self.assertEqual(checkpoint["fusion_config"]["head_kind"], "cls_concat")
             self.assertIsNone(checkpoint["fusion_config"]["gate_mode"])
+            loaded_head, loaded_payload = load_descriptor_head(history.best_checkpoint)
+            self.assertEqual(loaded_head.config.output_dim, 3)
+            self.assertEqual(loaded_payload["epoch"], 0)
 
     def test_final_checkpoint_uses_the_last_requested_epoch(self) -> None:
-        fusion_config = FusionConfig(token_dim=4, layer_indices=(0, 1), output_dim=3)
+        fusion_config = FusionConfig(
+            token_dim=4,
+            layer_indices=(0, 1),
+            output_dim=3,
+            head_kind="global_local",
+            gate_mode="dynamic",
+        )
         training_config = TrainingConfig(
             batch_size=2,
             epochs=3,
@@ -209,11 +210,14 @@ class TrainingTests(unittest.TestCase):
                     history = trainer.fit(
                         max_epochs=2,
                         enable_early_stopping=False,
+                        save_best_checkpoint=False,
                     )
             final_checkpoint = trainer.save_final_checkpoint(history)
             payload = torch.load(final_checkpoint, map_location="cpu", weights_only=False)
 
             self.assertEqual(len(history.epochs), 2)
+            self.assertIsNone(history.best_checkpoint)
+            self.assertFalse((Path(temporary) / "best.pt").exists())
             self.assertEqual(payload["epoch"], 1)
             self.assertEqual(payload["checkpoint_kind"], "final")
 

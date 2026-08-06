@@ -1,149 +1,124 @@
-# Lightweight multi-level CBIR
+# Lightweight CBIR
 
-This repository implements the course project **Content-Based Image Retrieval
-Using Multi-Level Deep Embeddings**.  It freezes DINOv2 ViT-S/14 with registers,
-caches all-layer global/local aggregates, trains compact global-local and
-CLS-only descriptor heads on retrieval-SfM-30k pairs, and evaluates a locked
-model on Revisited Oxford and Paris.
+Course project for content-based image retrieval with multi-level DINOv2
+embeddings. The backbone is frozen DINOv2 ViT-S/14 with registers. Small heads
+are trained on retrieval-SfM-30k and evaluated once on Revisited Oxford and
+Paris.
 
-## Repository layout
+## Setup
 
-- `src/cbir/`: importable implementation: backbone, pooling, cache, fusion,
-  training, evaluation, artifact, and hosted-runtime helpers.
-- `scripts/`: reproducible data preparation, extraction, cache restoration,
-  training, and evaluation entry points.
-- `configs/`: complete runtime profiles.  `colab.yaml` is the one canonical
-  configuration used by all cloud stages.
-- `notebooks/`: the notebook workflow.  Notebooks remain in this directory;
-  they do not need to move to the repository root.
-- `outputs/`: disposable local notebook artifacts, ignored by Git.
+From the repository root:
 
-## Colab workflow
-
-Each active notebook is deliberately self-contained because opening another
-Colab notebook must be treated as a new runtime.  Open them in separate browser
-tabs through URLs of this form after pushing the repository to GitHub:
-
-```text
-https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/notebooks/02_data_and_feature_cache.ipynb
-https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/notebooks/03_layer_set_selection.ipynb
-https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/notebooks/04_descriptor_dimension_selection.ipynb
-https://colab.research.google.com/github/armin-faraji/LightweightCBIR/blob/main/notebooks/05_final_runs_and_revisitop.ipynb
+```bash
+conda env create -f environment.yml
+conda activate lightweight-cbir
+conda env config vars set PYTHONPATH="$PWD/src"
+conda deactivate
+conda activate lightweight-cbir
+jupyter lab
 ```
 
-The first cell of each notebook mounts Drive, clones a project revision to
-`/content/lightweight-cbir`, installs a fresh local package copy, selects the repository as
-the current working directory, and records the runtime environment. It defaults
-to this repository's public HTTPS URL and `main`; override `CBIR_REPO_URL` and
-`CBIR_REPO_REVISION` for a fork, a private clone URL, or a pinned commit. Do
-**not** set `PYTHONPATH`; editable installation makes `cbir` importable. Do
-**not** use `!cd`; it affects only one temporary shell. The notebooks use Python
-`os.chdir()` and `subprocess.run(..., cwd=PROJECT_ROOT)` instead.
+`environment.yml` creates the local CUDA environment; `pyproject.toml` lists
+the Python dependencies. The `PYTHONPATH` setting makes `src/cbir` importable
+from every notebook without installing packages inside a notebook.
 
-The intended order is:
+The environment targets CUDA 12.1. If your machine needs another CUDA build,
+adjust `pytorch-cuda` in `environment.yml` before creating the environment.
+On WSL, first confirm that `nvidia-smi` works in Ubuntu.
 
-1. `01_backbone_access_check.ipynb` is a historical DINO-access diagnostic;
-   its conclusion is already recorded: use DINOv2 ViT-S/14 with registers.
-2. `02_data_and_feature_cache.ipynb` runs smoke checks, stages SfM-30k,
-   performs the pooling-temperature pilot, and builds/resumes the feature cache.
-3. `03_layer_set_selection.ipynb` restores the completed cache, runs fixed
-   256-D SfM-only layer-set and representation ablations, and records a
-   manually selected fusion configuration and layer set.
-4. `04_descriptor_dimension_selection.ipynb` compares descriptor dimensions
-   for the selected CLS-concatenation configuration at 64-D, 128-D, 256-D,
-   and 384-D, then writes the final-model lock file.
-5. `05_final_runs_and_revisitop.ipynb` restores that selection lock, retrains
-   the locked model on the merged SfM train/validation splits for its locked
-   epoch count, then stages RevisitOP and performs the held-out evaluation.
+## Local data layout
 
-Each active cloud-stage notebook (02–05) writes report-ready artifacts under
-`outputs/<notebook-number>/<run-id>/`, including figures, metrics, configuration,
-and runtime provenance.  Its final **Publish outputs to Drive** cell validates
-and publishes them to:
+Put downloaded archives and SfM source files here. They are ignored by Git.
 
 ```text
-MyDrive/lightweight-cbir/notebook_outputs/<notebook-number>/<run-id>/
-```
-
-Feature-cache shards are different from ordinary outputs: they are incrementally
-published to Drive during extraction, so a Colab disconnection loses at most the
-currently active shard. Notebook 03 also copies every newly improved checkpoint
-to Drive before continuing training. Run a notebook's final publish cell only
-after creating all artifacts for that run; it writes an immutable, validated
-artifact bundle. If you later create a changed plot or report in the same
-notebook session and publish again, it creates a fingerprint-suffixed revision
-rather than overwriting the earlier bundle.
-
-### Persistent layout
-
-```text
-MyDrive/lightweight-cbir/
-├── datasets/
+data/
+├── raw/
 │   ├── sfm30k/
+│   │   ├── retrieval-SfM-120k.pkl
+│   │   ├── retrieval-SfM-30k-imagenames-clusterids.mat
+│   │   └── retrieval-SfM-30k.mat
 │   └── revisitop/
-├── checkpoints/
-│   └── 03/
-├── feature_caches/
-├── notebook_outputs/
-├── locked/
-└── torch_hub/
+│       └── archives/
+│           ├── oxbuild_images-v1.tgz
+│           ├── paris_1-v1.tgz
+│           └── paris_2-v1.tgz
+├── models/
+│   └── torch_hub/  # created by Notebook 01
+└── cache/
+    ├── sfm30k/
+    └── revisitop/
 ```
 
-Use `configs/colab.yaml` for all three stages.  Once the pooling pilot selects a
-temperature, set it there *before* full extraction.  Keep the same backbone,
-preprocessing, and pooling fields for cache extraction, training, and final
-evaluation. The checked-in Colab profile already pins the tested immutable
-DINOv2 revision; retain that value for comparable cache and training artifacts.
+The notebooks reuse local SfM source files and RevisitOP archives when present,
+downloading only missing files. SfM extraction writes 1,000-image feature
+shards while decoding at most 128 source images at once. Later notebooks use
+the feature caches instead of decoding source images again.
 
-Notebook 03 is intentionally fixed at 256-D, so layer-set comparisons do not
-mix descriptor capacity with layer selection. Notebook 04 performs the
-64-D/128-D/256-D/384-D comparison after the student manually selects the
-CLS-concatenation method and layer set. Both notebooks reuse the completed
-frozen feature cache.
+## Notebook order
 
-The three global-local weighting variants are:
+1. `01_sfm_feature_cache.ipynb` downloads DINOv2 ViT-S/14 with registers,
+   runs the pooling-temperature pilot, and builds the all-layer SfM-30k cache.
+2. `02_layer_set_selection.ipynb` compares layer sets and fusion methods at
+   128-D on the SfM train/validation protocol.
+3. `03_descriptor_dimension_selection.ipynb` compares 64-D, 128-D, 256-D,
+   and 384-D descriptors for the selected layer set and method.
+4. `04_revisitop_feature_cache.ipynb` prepares frozen RevisitOP features for
+   whichever final fusion method was selected.
+5. `05_final_training_and_evaluation.ipynb` retrains the selected head on
+   merged SfM pairs for the selected epoch count, then evaluates ROxford5k and
+   RParis6k.
 
-- **Uniform layer weighting:** equal contribution from selected layers.
-- **Static layer weighting:** learned but image-independent layer weights.
-- **Dynamic layer weighting:** per-image weights from Layer-wise
-  Entropy-Modulated Gating (LEMG).
+The first notebook keeps the pooling-temperature pilot because it documents
+the choice of \(\tau_p = 0.025\). It is a diagnostic, not a RevisitOP tuning
+step.
 
-## Kaggle workflow
+`BACKBONE_BATCH_SIZE` controls frozen feature extraction. `TRAIN_BATCH_SIZE`
+controls InfoNCE batches and is part of an experiment specification; changing
+it means running that experiment again. Notebook 01 also exposes
+`DECODED_IMAGE_CHUNK_SIZE` for host-RAM control; it does not change features.
 
-`configs/kaggle.yaml` uses `/kaggle/working` for runtime files.  Attach a source
-snapshot and datasets as Kaggle inputs, copy/stage them into `/kaggle/working`,
-and publish each completed cache/output directory as a notebook output or Kaggle
-Dataset version.  Kaggle inputs are read-only and Google Drive mirroring is a
-Colab-specific feature.
+## Outputs and reuse
 
-## Local workflow
-
-Create a virtual environment, install the package, and use `configs/development.yaml`
-or a copied local profile:
-
-```bash
-python -m pip install -e ".[dev]"
-python scripts/prepare_sfm30k.py --config configs/development.yaml --image-source mat
-python scripts/extract_features.py --config configs/development.yaml --backbone-batch-size 8
+```text
+outputs/
+├── selections/
+│   ├── layer_set_selection.json
+│   └── final_model_selection.json
+├── 01_sfm_feature_cache/{figures,results.json}
+├── 02_layer_set_selection/
+│   ├── checkpoints/
+│   ├── figures/
+│   └── results.json
+├── 03_descriptor_dimension_selection/{checkpoints,figures,results.json}
+├── 04_revisitop_feature_cache/{figures,results.json}
+└── 05_final_training_and_evaluation/{checkpoints,figures,results.json}
 ```
 
-After full cache extraction, training needs only the feature cache and the two
-SfM metadata files; it does not need the 6 GB MAT image file.  The final RevisitOP
-run separately requires its dataset images and ground truth.
+Notebook 02, 03, and 05 use `results.json` to reuse matching experiments.
+Those records keep complete per-epoch histories and settings; checkpoints live
+beside the results that produced them. Notebook 01 and 04 use `results.json`
+as concise run reports. Their cache manifests control feature-cache reuse.
 
-## Command-line stages
+Feature-cache manifests record the extraction settings. Rebuild a cache
+explicitly when the backbone, preprocessing, or pooling temperature changes.
+Raw source files and archives are never deleted automatically.
 
-```bash
-python scripts/restore_sfm_cache.py --config configs/colab.yaml
-python scripts/train_head.py --config configs/colab.yaml --cache-dir <validated-local-cache>
-python scripts/prepare_revisitop.py \
-  --output-root /content/cbir_data/revisitop \
-  --source-root /content/drive/MyDrive/lightweight-cbir/datasets/revisitop \
-  --mode auto \
-  --publish-root /content/drive/MyDrive/lightweight-cbir/datasets/revisitop \
-  --repair
-python scripts/evaluate_revisitop.py --config configs/colab.yaml --checkpoint <final_full_sfm.pt> --revisit-root <root> --dataset roxford5k
-```
+## Experiment protocol
+
+- DINOv2 remains frozen; only descriptor heads are trained.
+- The all-layer SfM cache uses long-side 224 preprocessing and
+  \(\tau_p = 0.025\).
+- Notebook 02 compares final CLS, multi-level CLS concatenation, Uniform layer
+  weighting, Static layer weighting, and Dynamic layer weighting. Dynamic
+  weighting uses Layer-wise Entropy-Modulated Gating.
+- SfM InfoNCE batches include at most one positive pair per reconstruction
+  cluster.
+- RevisitOP is held out: do not use it to select temperature, layers,
+  dimension, method, seed, or epoch.
+
+Historical runs remain recorded in `EXPERIMENT_LOG.md`. Local runs are
+documented separately so the older 256-D layer-selection study is not confused
+with the streamlined 128-D study.
 
 ## Tests
 
@@ -151,17 +126,4 @@ python scripts/evaluate_revisitop.py --config configs/colab.yaml --checkpoint <f
 python -m unittest discover -s tests -v
 ```
 
-The suite validates preprocessing, register-token exclusion, pooling, cache
-integrity/resumption, artifact publishing, fusion math, SfM joins, cluster-safe
-batching, and RevisitOP protocol semantics.  It does not download a dataset or
-checkpoint.
-
-## Guardrails
-
-- The DINO backbone remains frozen; only the fusion head is trained.
-- Do not mix cache settings: model revision, preprocessing, pooling temperature,
-  and token convention changes require a new cache.
-- Build InfoNCE batches with at most one pair from each SfM cluster.
-- Do not call pair-only SfM validation “mAP.”
-- Do not choose layers, descriptor dimension, temperature, seed, or checkpoint
-  using RevisitOP labels.
+The tests do not download data or model weights.
