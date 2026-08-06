@@ -104,14 +104,15 @@ def descriptors_from_feature_tensors(
     for start in range(0, cls.shape[0], batch_size):
         stop = start + batch_size
         result = head(
-            cls[start:stop].to(device),
-            None if local is None else local[start:stop].to(device),
-            None if entropy is None else entropy[start:stop].to(device),
+            cls[start:stop].float().to(device),
+            None if local is None else local[start:stop].float().to(device),
+            None if entropy is None else entropy[start:stop].float().to(device),
         )
         if not isinstance(result, torch.Tensor):
             result = result[0]
         outputs.append(result.cpu())
     return l2_normalize(torch.cat(outputs, dim=0))
+
 
 
 def rank_exact(
