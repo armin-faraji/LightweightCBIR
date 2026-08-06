@@ -7,7 +7,7 @@ Paris.
 
 ## Setup
 
-From the repository root:
+If you prefer using Conda, run the following bash commands from the repository root:
 
 ```bash
 conda env create -f environment.yml
@@ -15,7 +15,20 @@ conda activate lightweight-cbir
 conda env config vars set PYTHONPATH="$PWD/src"
 conda deactivate
 conda activate lightweight-cbir
-jupyter lab
+jupyter lab                     # Your prefred Jupyter compatible IDE
+```
+
+Or if you prefer using pip + venv, run the following instead from the repository root:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate               # Linux/macOS
+# source .venv\Scripts\activate         # Windows (Command Prompt)
+# source .venv\Scripts\Activate.ps1     # Windows (PowerShell)
+pip install --upgrade pip
+pip install -e .
+pip install -e ".[dev]"
+jupyter lab                     # Your prefred Jupyter compatible IDE
 ```
 
 `environment.yml` creates the local CUDA environment; `pyproject.toml` lists
