@@ -1,9 +1,9 @@
-# Lightweight CBIR
+# Lightweight Content-Based Image Retrieval with Multi-Level Deep Embeddings (Lightweight-CBIR)
 
-Course project for content-based image retrieval with multi-level DINOv2
-embeddings. The backbone is frozen DINOv2 ViT-S/14 with registers. Small heads
-are trained on retrieval-SfM-30k and evaluated once on Revisited Oxford and
-Paris.
+This repository presents the final project for my graduate-level Image Processing course at Amirkabir University of Technology.
+We use frozen DINOv2 ViT-S/14 with registers. Small heads
+are trained on retrieval-SfM-30k dataset and evaluated once on Revisited Oxford and
+Paris datasets.
 
 ## Setup
 
@@ -15,7 +15,7 @@ conda activate lightweight-cbir
 conda env config vars set PYTHONPATH="$PWD/src"
 conda deactivate
 conda activate lightweight-cbir
-jupyter lab                     # Your prefred Jupyter compatible IDE
+jupyter lab                     # Or run your prefred Jupyter compatible IDE
 ```
 
 Or if you prefer using pip + venv, run the following instead from the repository root:
@@ -28,20 +28,18 @@ source .venv/bin/activate               # Linux/macOS
 pip install --upgrade pip
 pip install -e .
 pip install -e ".[dev]"
-jupyter lab                     # Your prefred Jupyter compatible IDE
+jupyter lab                     # Or run your prefred Jupyter compatible IDE
 ```
 
 `environment.yml` creates the local CUDA environment; `pyproject.toml` lists
 the Python dependencies. The `PYTHONPATH` setting makes `src/cbir` importable
-from every notebook without installing packages inside a notebook.
+from every notebook.
 
-The environment targets CUDA 12.1. If your machine needs another CUDA build,
+The environment targets CUDA 13.0. If your machine needs another CUDA build,
 adjust `pytorch-cuda` in `environment.yml` before creating the environment.
-On WSL, first confirm that `nvidia-smi` works in Ubuntu.
+On Linux (or WSL), first confirm that `nvidia-smi` works in the terminal.
 
 ## Local data layout
-
-Put downloaded archives and SfM source files here. They are ignored by Git.
 
 ```text
 data/
@@ -72,7 +70,7 @@ the feature caches instead of decoding source images again.
 1. `01_sfm_feature_cache.ipynb` downloads DINOv2 ViT-S/14 with registers,
    runs the pooling-temperature pilot, and builds the all-layer SfM-30k cache.
 2. `02_layer_set_selection.ipynb` compares layer sets and fusion methods at
-   128-D on the SfM train/validation protocol.
+   384-D on the SfM train/validation protocol.
 3. `03_descriptor_dimension_selection.ipynb` compares 64-D, 128-D, 256-D,
    and 384-D descriptors for the selected layer set and method.
 4. `04_revisitop_feature_cache.ipynb` prepares frozen RevisitOP features for
@@ -82,8 +80,9 @@ the feature caches instead of decoding source images again.
    RParis6k.
 
 The first notebook keeps the pooling-temperature pilot because it documents
-the choice of \(\tau_p = 0.025\). It is a diagnostic, not a RevisitOP tuning
+the choice of \(\τ_p = 0.025\). It is not a RevisitOP tuning
 step.
+τ_p (tau_p) is the pooling temperature governing how sharply the CLS token's cosine similarity to each patch is converted into pooling weights via softmax for the dynamic layer weighting. A smaller τ_p concentrates the descriptor on fewer, semantically relevant patches; a larger value approaches uniform mean-patch pooling and loses locality.
 
 `BACKBONE_BATCH_SIZE` controls frozen feature extraction. `TRAIN_BATCH_SIZE`
 controls InfoNCE batches and is part of an experiment specification; changing
@@ -119,24 +118,12 @@ Raw source files and archives are never deleted automatically.
 ## Experiment protocol
 
 - DINOv2 remains frozen; only descriptor heads are trained.
-- The all-layer SfM cache uses long-side 224 preprocessing and
+- The all-layer SfM cache uses long-side 224 preprocessing (meaning that the images would be resized so that their long side would be 224 pixel and the their short side would become a multiple of 14 by cropping) and
   \(\tau_p = 0.025\).
-- Notebook 02 compares final CLS, multi-level CLS concatenation, Uniform layer
+- Notebook 02 compares final layer CLS token, multi-level CLS concatenation, Uniform layer
   weighting, Static layer weighting, and Dynamic layer weighting. Dynamic
   weighting uses Layer-wise Entropy-Modulated Gating.
 - SfM InfoNCE batches include at most one positive pair per reconstruction
   cluster.
 - RevisitOP is held out: do not use it to select temperature, layers,
   dimension, method, seed, or epoch.
-
-Historical runs remain recorded in `EXPERIMENT_LOG.md`. Local runs are
-documented separately so the older 256-D layer-selection study is not confused
-with the streamlined 128-D study.
-
-## Tests
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-The tests do not download data or model weights.
